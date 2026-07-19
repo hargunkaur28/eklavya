@@ -478,7 +478,8 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      return res.status(500).json({ error: 'Failed to synthesize live question audio.' });
+      // Sarvam API out of credits or unavailable -> signal frontend to use Web Speech API fallback
+      return res.json({ useFallback: true, fallbackText: textToSpeak });
     }
 
     const audioUrl = saveAudioFile(filename, audioBuffer, true);

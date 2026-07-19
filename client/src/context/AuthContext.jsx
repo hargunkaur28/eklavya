@@ -108,7 +108,24 @@ export function AuthProvider({ children }) {
     sessionStorage.setItem('eklavya_token', data.token);
     setToken(data.token);
     setUser(data.user);
-    const roadmap = await refreshRoadmap();
+
+    let roadmap = null;
+    try {
+      const rmRes = await fetch(`${API_BASE}/roadmap/mine`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${data.token}`
+        }
+      });
+      if (rmRes.ok) {
+        const rmData = await rmRes.json();
+        roadmap = rmData.roadmap || null;
+        setActiveRoadmap(roadmap);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch active roadmap on login:', err.message);
+    }
+
     return { user: data.user, roadmap };
   };
 

@@ -31,21 +31,122 @@ export default function SpeakerButton({
     };
   }, []);
 
+  const playWebSpeechFallback = (textToSpeak) => {
+    if (!('speechSynthesis' in window) || !textToSpeak) return false;
+
+    try {
+      window.speechSynthesis.cancel();
+
+      // Chunk text into short sentences to avoid Chrome long-text speech timeouts
+      const sentences = textToSpeak.length > 250
+        ? textToSpeak.split(/(?<=[.?!।\n])\s+/).filter(s => s.trim().length > 0)
+        : [textToSpeak];
+
+      let currentIndex = 0;
+
+      const speakNextSentence = () => {
+        if (currentIndex >= sentences.length) {
+          setStatus('idle');
+          audioRef.current = null;
+          return;
+        }
+
+        const currentText = sentences[currentIndex];
+        const utterance = new SpeechSynthesisUtterance(currentText);
+        const targetLangPrefix = language === 'hi' ? 'hi' : 'en';
+        utterance.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+        utterance.rate = 0.95;
+
+        const voices = window.speechSynthesis.getVoices();
+        if (voices && voices.length > 0) {
+          const matchingVoice = voices.find(v => v.lang.toLowerCase().startsWith(targetLangPrefix)) ||
+                                voices.find(v => v.lang.toLowerCase().includes('in')) ||
+                                voices[0];
+          if (matchingVoice) {
+            utterance.voice = matchingVoice;
+          }
+        }
+
+        utterance.onend = () => {
+          currentIndex++;
+          speakNextSentence();
+        };
+
+        utterance.onerror = (e) => {
+          if (e.error === 'interrupted' || e.error === 'canceled') {
+            return;
+          }
+          console.warn('SpeechSynthesis sentence error:', e);
+          setStatus('idle');
+          audioRef.current = null;
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      audioRef.current = {
+        pause: () => {
+          window.speechSynthesis.cancel();
+          currentIndex = sentences.length;
+        },
+        currentTime: 0
+      };
+
+      setStatus('playing');
+      speakNextSentence();
+      return true;
+    } catch (err) {
+      console.warn('Web Speech API fallback error:', err);
+      return false;
+    }
+  };
+
+  const getFullAudioUrl = (relativeOrFullUrl) => {
+    if (!relativeOrFullUrl) return '';
+    if (relativeOrFullUrl.startsWith('http')) return relativeOrFullUrl;
+
+    let apiBase = import.meta.env.VITE_API_BASE_URL || '';
+    if (!apiBase && typeof window !== 'undefined') {
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        apiBase = 'http://127.0.0.1:5000/api';
+      } else {
+        apiBase = '/api';
+      }
+    }
+
+    const rootUrl = apiBase.replace(/\/api\/?$/, '');
+    return `${rootUrl}${relativeOrFullUrl.startsWith('/') ? '' : '/'}${relativeOrFullUrl}`;
+  };
+
   const handleClick = async (e) => {
     e.stopPropagation();
 
     // If currently playing, stop audio
     if (status === 'playing' && audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+      if (typeof audioRef.current.pause === 'function') {
+        audioRef.current.pause();
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      audioRef.current = null;
       setStatus('idle');
       return;
     }
 
-    if (status === 'loading' || status === 'error') return;
+    if (status === 'loading') return;
 
     setStatus('loading');
     setErrorType(null);
+
+    const extractTextForFallback = () => {
+      if (fallbackText) return fallbackText;
+      if (fetchPayload?.questionText) return fetchPayload.questionText;
+      const proseEl = document.querySelector('.prose-body');
+      if (proseEl) return proseEl.innerText;
+      return null;
+    };
 
     try {
       let res;
@@ -60,32 +161,24 @@ export default function SpeakerButton({
         throw new Error('No audio source specified');
       }
 
-      if (res.status === 429) {
-        setStatus('error');
-        setErrorType('rate_limited');
-        // Auto-clear rate limit state after 30 seconds
-        resetTimerRef.current = setTimeout(() => {
-          setStatus('idle');
-          setErrorType(null);
-        }, 30000);
-        return;
-      }
-
       if (!res.ok) {
+        const textToSpeak = extractTextForFallback();
+        if (textToSpeak && playWebSpeechFallback(textToSpeak)) {
+          return;
+        }
         throw new Error(`HTTP ${res.status}`);
       }
 
       const data = await res.json();
-      if (!data.audioUrl) {
+      if (data.useFallback || !data.audioUrl) {
+        const textToSpeak = data.fallbackText || extractTextForFallback();
+        if (textToSpeak && playWebSpeechFallback(textToSpeak)) {
+          return;
+        }
         throw new Error('No audio URL returned');
       }
 
-      // Convert relative URL to full backend URL if needed
-      const apiRoot = import.meta.env.VITE_API_ROOT_URL || 'http://127.0.0.1:5000';
-      const fullUrl = data.audioUrl.startsWith('http')
-        ? data.audioUrl
-        : `${apiRoot}${data.audioUrl}`;
-
+      const fullUrl = getFullAudioUrl(data.audioUrl);
       const audio = new Audio(fullUrl);
       audioRef.current = audio;
 
@@ -95,6 +188,10 @@ export default function SpeakerButton({
       };
 
       audio.onerror = () => {
+        const textToSpeak = extractTextForFallback();
+        if (textToSpeak && playWebSpeechFallback(textToSpeak)) {
+          return;
+        }
         setStatus('error');
         setErrorType('unavailable');
         audioRef.current = null;
@@ -103,7 +200,11 @@ export default function SpeakerButton({
       await audio.play();
       setStatus('playing');
     } catch (err) {
-      console.warn('SpeakerButton playback error:', err.message);
+      console.warn('SpeakerButton playback error, activating Web Speech fallback:', err.message);
+      const textToSpeak = extractTextForFallback();
+      if (textToSpeak && playWebSpeechFallback(textToSpeak)) {
+        return;
+      }
       setStatus('error');
       setErrorType('unavailable');
     }

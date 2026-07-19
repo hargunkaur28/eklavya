@@ -67,6 +67,23 @@ export default function RoadmapDashboard() {
     }
   }, [language, diagnosticData, authFetch, setActiveRoadmap]);
 
+  // Auto-fetch full diagnostic result if diagnosticResultId is stored as a string ID
+  useEffect(() => {
+    if (activeRoadmap?.diagnosticResultId && typeof activeRoadmap.diagnosticResultId === 'string') {
+      authFetch(`/diagnostic/${activeRoadmap.diagnosticResultId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data._id) {
+            setActiveRoadmap((prev) => ({
+              ...prev,
+              diagnosticResultId: data
+            }));
+          }
+        })
+        .catch((err) => console.warn('Failed to populate diagnosticResultId:', err));
+    }
+  }, [activeRoadmap?.diagnosticResultId, authFetch, setActiveRoadmap]);
+
   if (!activeRoadmap) {
     return (
       <div className="onboarding-page">

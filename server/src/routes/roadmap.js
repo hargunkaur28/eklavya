@@ -255,7 +255,7 @@ router.get('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
     let displayContent = targetDay.content;
 
     if (isHindi) {
-      if (targetDay.translatedHindiTopic && targetDay.hindiTopicTranslated) {
+      if (targetDay.translatedHindiTopic && targetDay.hindiTopicTranslated && targetDay.translatedHindiTopic.trim() !== targetDay.topic.trim()) {
         displayTopic = targetDay.translatedHindiTopic;
       } else {
         const transTopic = await translateTextWithSarvam(targetDay.topic);
@@ -267,7 +267,7 @@ router.get('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
         }
       }
 
-      if (targetDay.translatedHindiFocus && targetDay.hindiFocusTranslated) {
+      if (targetDay.translatedHindiFocus && targetDay.hindiFocusTranslated && targetDay.translatedHindiFocus.trim() !== targetDay.focus.trim()) {
         displayFocus = targetDay.translatedHindiFocus;
       } else {
         const transFocus = await translateTextWithSarvam(targetDay.focus);
@@ -279,7 +279,7 @@ router.get('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
         }
       }
 
-      if (targetDay.translatedHindiContent && targetDay.hindiContentTranslated) {
+      if (targetDay.translatedHindiContent && targetDay.hindiContentTranslated && targetDay.translatedHindiContent.trim() !== targetDay.content.trim()) {
         displayContent = targetDay.translatedHindiContent;
       } else {
         const transContent = await translateTextWithSarvam(targetDay.content);
@@ -393,7 +393,7 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Roadmap not found.' });
     }
 
-    if (roadmap.userId.toString() !== req.userId) {
+    if (roadmap.userId && roadmap.userId.toString() !== req.userId) {
       return res.status(403).json({ error: 'Unauthorized access to roadmap audio.' });
     }
 
@@ -433,7 +433,8 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      return res.status(500).json({ error: 'Failed to synthesize speech audio.' });
+      // Sarvam API out of credits or unavailable -> signal frontend to use Web Speech API fallback
+      return res.json({ useFallback: true, fallbackText: textToSpeak });
     }
 
     // Save audio file to disk and update MongoDB pointer
@@ -444,11 +445,7 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     res.json({ audioUrl });
   } catch (error) {
     console.error('Roadmap day audio error:', error.message);
-    if (error.response) {
-      console.error('Sarvam API Error Status:', error.response.status);
-      console.error('Sarvam API Error Data:', JSON.stringify(error.response.data));
-    }
-    res.status(500).json({ error: 'Server error generating day audio.' });
+    return res.json({ useFallback: true, fallbackText: 'Lesson content' });
   }
 });
 
