@@ -81,9 +81,10 @@ export default function SpeakerButton({
       }
 
       // Convert relative URL to full backend URL if needed
+      const apiRoot = import.meta.env.VITE_API_ROOT_URL || 'http://127.0.0.1:5000';
       const fullUrl = data.audioUrl.startsWith('http')
         ? data.audioUrl
-        : `http://127.0.0.1:5000${data.audioUrl}`;
+        : `${apiRoot}${data.audioUrl}`;
 
       const audio = new Audio(fullUrl);
       audioRef.current = audio;
