@@ -1791,7 +1791,7 @@ button {
 
 /* ── Onboarding Styles ── */
 .onboarding-page {
-  padding: 6rem 1rem 4rem;
+  padding: 1.5rem 1rem 3rem;
   min-height: 80vh;
   display: flex;
   justify-content: center;
@@ -1990,7 +1990,7 @@ button {
 
 /* ── Dashboard Styles ── */
 .dashboard-page {
-  padding: 6rem 1.5rem 5rem;
+  padding: 1.5rem 1.5rem 4rem;
   max-width: 900px;
   margin: 0 auto;
 }
@@ -2197,7 +2197,7 @@ button {
 
 /* ── Diagnostic Review Styles ── */
 .review-page {
-  padding: 6rem 1.5rem 5rem;
+  padding: 1.5rem 1.5rem 4rem;
   max-width: 880px;
   margin: 0 auto;
 }
@@ -2458,12 +2458,17 @@ button {
 
 .q-explanation-box {
   background: #FAF8F2;
-  border-top: 1px dashed #E4DAC5;
-  padding-top: 0.75rem;
-  margin-top: 0.75rem;
+  border: 1px dashed #E4DAC5;
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  margin-top: 0.85rem;
   font-size: 0.88rem;
   color: #6B6357;
   line-height: 1.45;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .review-action-footer {
@@ -2474,7 +2479,7 @@ button {
 
 /* ── Day Detail Styles ── */
 .day-detail-page {
-  padding: 6rem 1.5rem 5rem;
+  padding: 1.5rem 1.5rem 4rem;
   max-width: 860px;
   margin: 0 auto;
 }
@@ -2698,6 +2703,45 @@ button {
   background: #2F6B3A;
   color: #ffffff;
   box-shadow: 0 4px 12px rgba(47, 107, 58, 0.2);
+}
+
+/* ── Mobile Responsiveness Enhancements ── */
+@media (max-width: 768px) {
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
+  }
+
+  .dashboard-header h2 {
+    font-size: 1.65rem;
+    line-height: 1.25;
+    word-break: break-word;
+  }
+
+  .dashboard-subtitle {
+    font-size: 0.88rem;
+  }
+
+  .review-header-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1.25rem;
+    padding: 1.25rem 1.35rem;
+    overflow: hidden;
+  }
+
+  .review-score-badge {
+    width: 100%;
+    justify-content: flex-start;
+    box-sizing: border-box;
+  }
+
+  .review-header-card h2 {
+    font-size: 1.35rem;
+    line-height: 1.3;
+    word-break: break-word;
+  }
 }
 
 

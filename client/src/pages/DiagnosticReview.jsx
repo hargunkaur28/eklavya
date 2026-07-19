@@ -257,7 +257,13 @@ export default function DiagnosticReview() {
 
                 {displayExp && (
                   <div className="q-explanation-box">
-                    <strong>{tDash.explanation}</strong> {displayExp}
+                    <div style={{ flex: 1 }}>
+                      <strong>{tDash.explanation}</strong> {displayExp}
+                    </div>
+                    <SpeakerButton
+                      fetchPayload={{ questionText: `${language === 'hi' ? 'व्याख्या' : 'Explanation'}: ${displayExp}`, options: [], language }}
+                      size={15}
+                    />
                   </div>
                 )}
               </div>

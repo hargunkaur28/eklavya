@@ -116,7 +116,6 @@ export default function RoadmapDashboard() {
             <h3 style={{ margin: '0 0 0.35rem', fontSize: '1.45rem', fontWeight: '800', color: '#2F6B3A' }}>
               {typeof t.greeting === 'function' ? t.greeting(userName) : `Hello, ${userName}`}
             </h3>
-            <span className="section-kicker">{t.studentCommandCenter}</span>
             <h2>{formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}</h2>
             <p className="dashboard-subtitle">
               {t.tailoredScheduleSubtitle}
@@ -328,7 +327,13 @@ export default function RoadmapDashboard() {
 
                           {displayExp && (
                             <div className="q-explanation-box">
-                              <strong>{t.explanation}</strong> {displayExp}
+                              <div style={{ flex: 1 }}>
+                                <strong>{t.explanation}</strong> {displayExp}
+                              </div>
+                              <SpeakerButton
+                                fetchPayload={{ questionText: `${language === 'hi' ? 'व्याख्या' : 'Explanation'}: ${displayExp}`, options: [], language }}
+                                size={15}
+                              />
                             </div>
                           )}
                         </div>
