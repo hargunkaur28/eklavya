@@ -26,7 +26,7 @@ export default function CourseDetail({ course, onBack }) {
     <main>
       <header className="detail-header">
         <button className="back-button" onClick={onBack}><ChevronLeft size={18} /> {t('courseDetail.backToCourses')}</button>
-        <a className="brand" href="#" onClick={onBack}>LMS</a>
+        <a className="brand" href="#" onClick={onBack}>{t('brand')}</a>
       </header>
       <section className="detail-hero">
         <img src={course.image} alt={loc(course.imageAlt)} />

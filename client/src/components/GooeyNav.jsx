@@ -142,7 +142,7 @@ const GooeyNav = ({
 
     resizeObserver.observe(containerRef.current);
     return () => resizeObserver.disconnect();
-  }, [activeIndex]);
+  }, [activeIndex, items]);
 
   return (
     <div className="gooey-nav-container" ref={containerRef}>

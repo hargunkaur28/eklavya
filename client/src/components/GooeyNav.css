@@ -28,10 +28,10 @@
 }
 
 .gooey-nav-container {
-  --color-1: #4e2bd9; /* primary brand purple */
-  --color-2: #6366f1; /* indigo */
-  --color-3: #8b5cf6; /* violet */
-  --color-4: #4f46e5; /* deep blue */
+  --color-1: #2F6B3A; /* forest green primary */
+  --color-2: #3d8a4a; /* green medium */
+  --color-3: #4a9e58; /* green light */
+  --color-4: #25522E; /* deep forest green */
   position: relative;
 }
 
@@ -49,7 +49,7 @@
   margin: 0;
   position: relative;
   z-index: 3;
-  color: #556070; /* slate text color */
+  color: #6B6357; /* earthy text color */
 }
 
 .gooey-nav-container nav ul li {
@@ -66,18 +66,18 @@
 .gooey-nav-container nav ul li a {
   display: inline-block;
   padding: 0.6em 1em;
-  color: #556070;
+  color: #6B6357;
   font-weight: 700;
   font-size: 0.95rem;
   transition: color 0.3s ease;
 }
 
 .gooey-nav-container nav ul li a:hover {
-  color: #4e2bd9; /* purple hover */
+  color: #2F6B3A; /* green hover */
 }
 
 .gooey-nav-container nav ul li:focus-within:has(:focus-visible) {
-  box-shadow: 0 0 0.5px 1.5px #4e2bd9;
+  box-shadow: 0 0 0.5px 1.5px #2F6B3A;
 }
 
 .gooey-nav-container nav ul li::after {
@@ -85,7 +85,7 @@
   position: absolute;
   inset: 0;
   border-radius: 10px;
-  background: #4e2bd9; /* brand purple active background */
+  background: #2F6B3A; /* green active background */
   opacity: 0;
   transform: scale(0);
   transition: all 0.3s ease;
@@ -115,7 +115,7 @@
 }
 
 .gooey-nav-container .effect.text {
-  color: #556070;
+  color: #6B6357;
   font-weight: 700;
   font-size: 0.95rem;
   padding: 0.6em 1em;
@@ -137,7 +137,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: #4e2bd9; /* brand purple active pill */
+  background: #2F6B3A; /* green active pill */
   transform: scale(0);
   opacity: 0;
   z-index: -1;

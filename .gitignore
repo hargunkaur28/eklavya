@@ -27,6 +27,17 @@ walkthrough.md
 implementation_plan.md
 task.md
 
+# Environment variables
+.env
+*.env
+server/.env
+client/.env
+
+# Uploads & Temp Audio
+server/uploads/
+uploads/
+server/node_modules/
+
 # IDEs and editors
 .idea/
 .vscode/

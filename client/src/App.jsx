@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { courses } from './data/courses.js';
 import { LanguageProvider } from './context/LanguageContext.jsx';
+import { AuthProvider } from './context/AuthContext.jsx';
+import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Header from './components/Header.jsx';
 import Hero from './components/Hero.jsx';
 import Stats from './components/Stats.jsx';
@@ -12,36 +15,249 @@ import Footer from './components/Footer.jsx';
 import CourseDetail from './components/CourseDetail.jsx';
 import ScrollReveal from './components/ScrollReveal.jsx';
 import AIForLearning from './components/AIForLearning.jsx';
+import AuthModal from './components/AuthModal.jsx';
+import Onboarding from './components/Onboarding.jsx';
+import RoadmapDashboard from './components/RoadmapDashboard.jsx';
+import DiagnosticReview from './pages/DiagnosticReview.jsx';
+import DayDetail from './pages/DayDetail.jsx';
 
-export default function App() {
-  const [selectedCourseId, setSelectedCourseId] = useState(null);
+// Home Component with landing page sections
+function Home({ initialAuthTab = null }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const selectedCourse = useMemo(
-    () => courses.find((course) => course.id === selectedCourseId),
-    [selectedCourseId]
-  );
+  const [authModalTab, setAuthModalTab] = useState(initialAuthTab);
+  const navigate = useNavigate();
 
-  if (selectedCourse) {
+  useEffect(() => {
+    if (initialAuthTab) {
+      setAuthModalTab(initialAuthTab);
+    }
+    if (window.location.pathname === '/courses') {
+      setTimeout(() => {
+        document.getElementById('courses')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  }, [initialAuthTab]);
+
+  const handleSelectCourse = (courseId) => {
+    navigate(`/courses/${courseId}`);
+  };
+
+  const handleCloseAuthModal = () => {
+    setAuthModalTab(null);
+    if (window.location.pathname === '/login' || window.location.pathname === '/signup') {
+      navigate('/');
+    }
+  };
+
+  return (
+    <main>
+      <Header
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
+      />
+      <Hero />
+      <ScrollReveal><Stats /></ScrollReveal>
+      <AIForLearning />
+      <ScrollReveal><WhyChoose /></ScrollReveal>
+      <ScrollReveal><Courses onSelect={handleSelectCourse} /></ScrollReveal>
+      <ScrollReveal><Testimonials /></ScrollReveal>
+      <ScrollReveal><Cta /></ScrollReveal>
+      <div className="footer-wrapper">
+        <Footer />
+      </div>
+
+      <AuthModal
+        isOpen={Boolean(authModalTab)}
+        onClose={handleCloseAuthModal}
+        initialTab={authModalTab || 'login'}
+      />
+    </main>
+  );
+}
+
+// Course Detail Route Wrapper matching /courses/:id
+function CourseDetailWrapper() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const selectedCourse = courses.find((course) => course.id === id);
+
+  if (!selectedCourse) {
     return (
-      <LanguageProvider>
-        <CourseDetail course={selectedCourse} onBack={() => setSelectedCourseId(null)} />
-      </LanguageProvider>
+      <div style={{ textAlign: 'center', padding: '6rem 1rem' }}>
+        <h2>Course not found</h2>
+        <button className="primary-button" onClick={() => navigate('/courses')}>
+          Back to Courses
+        </button>
+      </div>
     );
   }
 
   return (
-    <LanguageProvider>
-      <main>
-        <Header mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
-        <Hero />
-        <ScrollReveal><Stats /></ScrollReveal>
-        <AIForLearning />
-        <ScrollReveal><WhyChoose /></ScrollReveal>
-        <ScrollReveal><Courses onSelect={setSelectedCourseId} /></ScrollReveal>
-        <ScrollReveal><Testimonials /></ScrollReveal>
-        <ScrollReveal><Cta /></ScrollReveal>
+    <CourseDetail
+      course={selectedCourse}
+      onBack={() => navigate('/')}
+    />
+  );
+}
+
+// Onboarding Page Wrapper
+function OnboardingWrapper() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState(null);
+
+  return (
+    <main>
+      <Header
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
+      />
+      <Onboarding />
+      <div className="footer-wrapper">
         <Footer />
-      </main>
+      </div>
+      <AuthModal
+        isOpen={Boolean(authModalTab)}
+        onClose={() => setAuthModalTab(null)}
+        initialTab={authModalTab || 'login'}
+      />
+    </main>
+  );
+}
+
+// Review Page Wrapper
+function ReviewWrapper() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState(null);
+
+  return (
+    <main>
+      <Header
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
+      />
+      <DiagnosticReview />
+      <div className="footer-wrapper">
+        <Footer />
+      </div>
+      <AuthModal
+        isOpen={Boolean(authModalTab)}
+        onClose={() => setAuthModalTab(null)}
+        initialTab={authModalTab || 'login'}
+      />
+    </main>
+  );
+}
+
+// Day Detail Page Wrapper
+function DayDetailWrapper() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState(null);
+
+  return (
+    <main>
+      <Header
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
+      />
+      <DayDetail />
+      <div className="footer-wrapper">
+        <Footer />
+      </div>
+      <AuthModal
+        isOpen={Boolean(authModalTab)}
+        onClose={() => setAuthModalTab(null)}
+        initialTab={authModalTab || 'login'}
+      />
+    </main>
+  );
+}
+
+// Dashboard Page Wrapper
+function DashboardWrapper() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState(null);
+
+  return (
+    <main>
+      <Header
+        mobileOpen={mobileOpen}
+        setMobileOpen={setMobileOpen}
+        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
+      />
+      <RoadmapDashboard />
+      <div className="footer-wrapper">
+        <Footer />
+      </div>
+      <AuthModal
+        isOpen={Boolean(authModalTab)}
+        onClose={() => setAuthModalTab(null)}
+        initialTab={authModalTab || 'login'}
+      />
+    </main>
+  );
+}
+
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [pathname]);
+
+  return null;
+}
+
+export default function App() {
+  return (
+    <LanguageProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <ScrollToTop />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/courses" element={<Home />} />
+            <Route path="/courses/:id" element={<CourseDetailWrapper />} />
+            <Route
+              path="/onboarding"
+              element={
+                <ProtectedRoute>
+                  <OnboardingWrapper />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/review/:id"
+              element={
+                <ProtectedRoute>
+                  <ReviewWrapper />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/roadmap/:roadmapId/day/:dayNumber"
+              element={
+                <ProtectedRoute>
+                  <DayDetailWrapper />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <DashboardWrapper />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/login" element={<Home initialAuthTab="login" />} />
+            <Route path="/signup" element={<Home initialAuthTab="signup" />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
     </LanguageProvider>
   );
 }

@@ -21,7 +21,7 @@ export default function Hero() {
       {/* Background Liquid Chrome animation */}
       <div className="hero-liquid-background">
         <LiquidChrome
-          baseColor={[0.3, 0.17, 0.85]}
+          baseColor={[0.18, 0.42, 0.23]}
           speed={0.35}
           amplitude={0.5}
           interactive={true}
@@ -81,9 +81,9 @@ export default function Hero() {
           style={{ '--delay': '520ms', '--reveal-translate': '10px' }}
         >
           <ul style={{ listStyle: 'none', padding: 0, marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-            <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#111827', fontSize: '0.95rem', fontWeight: '600' }}><Bot size={18} color="#4e2bd9" /> <strong>{t('hero.featureAi')}:</strong> {t('hero.featureAiDesc')}</li>
-            <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#111827', fontSize: '0.95rem', fontWeight: '600' }}><Languages size={18} color="#4e2bd9" /> <strong>{t('hero.featureTrans')}:</strong> {t('hero.featureTransDesc')}</li>
-            <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#111827', fontSize: '0.95rem', fontWeight: '600' }}><Mic size={18} color="#4e2bd9" /> <strong>{t('hero.featureSpeech')}:</strong> {t('hero.featureSpeechDesc')}</li>
+            <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#1F2A1F', fontSize: '0.95rem', fontWeight: '600' }}><Bot size={18} color="#2F6B3A" /> <strong>{t('hero.featureAi')}:</strong> {t('hero.featureAiDesc')}</li>
+            <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#1F2A1F', fontSize: '0.95rem', fontWeight: '600' }}><Languages size={18} color="#2F6B3A" /> <strong>{t('hero.featureTrans')}:</strong> {t('hero.featureTransDesc')}</li>
+            <li style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#1F2A1F', fontSize: '0.95rem', fontWeight: '600' }}><Mic size={18} color="#2F6B3A" /> <strong>{t('hero.featureSpeech')}:</strong> {t('hero.featureSpeechDesc')}</li>
           </ul>
         </div>
       </div>

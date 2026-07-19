@@ -4,7 +4,7 @@ import { Renderer, Program, Mesh, Triangle } from 'ogl';
 import './LiquidChrome.css';
 
 export const LiquidChrome = ({
-  baseColor = [0.3, 0.17, 0.85],
+  baseColor = [0.18, 0.42, 0.23],
   speed = 0.2,
   amplitude = 0.3,
   frequencyX = 3,
@@ -34,7 +34,7 @@ export const LiquidChrome = ({
       return;
     }
 
-    gl.clearColor(0.97, 0.98, 1.0, 1.0);
+    gl.clearColor(0.98, 0.96, 0.93, 1.0);
 
     const vertexShader = `
       attribute vec2 position;
@@ -73,8 +73,8 @@ export const LiquidChrome = ({
           uv += (diff / (dist + 0.0001)) * ripple * falloff;
 
           float wave = clamp(abs(sin(uTime - uv.y - uv.x)), 0.0, 1.0);
-          // Smooth blend from light canvas background to base purple waves
-          vec3 color = mix(vec3(0.97, 0.98, 1.0), uBaseColor, wave * 0.45);
+          // Smooth blend from light cream canvas background to base green waves
+          vec3 color = mix(vec3(0.98, 0.96, 0.93), uBaseColor, wave * 0.45);
           return vec4(color, 1.0);
       }
 

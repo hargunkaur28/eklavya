@@ -1,6 +1,7 @@
 import { ArrowRight } from 'lucide-react';
 import { courses } from '../data/courses.js';
 import { useLanguage } from '../context/LanguageContext.jsx';
+import { Link } from 'react-router-dom';
 
 export default function Courses({ onSelect }) {
   const { t, language } = useLanguage();
@@ -13,7 +14,9 @@ export default function Courses({ onSelect }) {
           <h2>{t('courses.heading')}</h2>
           <p>{t('courses.description')}</p>
         </div>
-        <a href="#courses">{t('courses.viewAll')} <ArrowRight size={16} /></a>
+        <Link to="/courses" onClick={() => document.getElementById('courses')?.scrollIntoView({ behavior: 'smooth' })}>
+          {t('courses.viewAll')} <ArrowRight size={16} />
+        </Link>
       </div>
       <div className="marquee-container">
         <div className="marquee-track course-track">

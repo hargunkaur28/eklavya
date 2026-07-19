@@ -1,5 +1,6 @@
 export const translations = {
   en: {
+    brand: 'Project Eklavya',
     // Header / Nav
     nav: {
       home: 'Home',
@@ -12,7 +13,85 @@ export const translations = {
     header: {
       login: 'Log In',
       getStarted: 'Get Started',
-      langToggleLabel: 'Switch to Hindi'
+      langToggleLabel: 'Switch to Hindi',
+      dashboard: 'Dashboard',
+      logout: 'Log Out'
+    },
+
+    auth: {
+      tagline: 'AI-Powered Learning for Bharat',
+      loginTab: 'Log In',
+      createAccountTab: 'Create Account',
+      fullName: 'Full Name',
+      fullNamePlaceholder: 'e.g. Ananya Sharma',
+      emailAddress: 'Email Address',
+      password: 'Password',
+      processing: 'Processing...',
+      loginSubmit: 'Log In to Account',
+      signupSubmit: 'Start Learning Free'
+    },
+
+    // Dashboard
+    dashboard: {
+      greeting: (name) => `Hello, ${name}`,
+      studentCommandCenter: 'Student Command Center',
+      retakeTest: 'Retake Test',
+      studyRoadmap: 'Study Roadmap',
+      diagnosticReview: 'Diagnostic Review',
+      yourRoadmapProgress: 'Your Roadmap Progress',
+      daysCompleted: (done, total) => `${done} of ${total} days completed`,
+      day: (num) => `Day ${num}`,
+      mins: (m) => `${m} mins`,
+      tailoredScheduleSubtitle: 'Tailored learning schedule based on your diagnostic assessment results.',
+      noRoadmapFound: 'No active study roadmap found',
+      noRoadmapSubtitle: 'Complete your diagnostic test to build your personalized AI roadmap.',
+      startDiagnostic: 'Start Onboarding Diagnostic',
+      translatingRoadmap: 'Translating study roadmap to Hindi via Sarvam Translate API...',
+      viewYoutubeResource: 'View YouTube Resource',
+      diagnosticAssessmentResults: 'Diagnostic Assessment Results',
+      aiRecommendation: 'AI Diagnostic Recommendation',
+      questionBreakdown: 'Diagnostic Question Breakdown',
+      question: (num) => `Question ${num}`,
+      correct: 'Correct',
+      incorrect: 'Incorrect',
+      yourAnswer: 'Your Answer',
+      correctAnswer: 'Correct Answer',
+      explanation: 'Explanation:',
+      noReviewAvailable: 'No Diagnostic Review Available',
+      noReviewSubtitle: 'This roadmap was created prior to detailed diagnostic review tracking. You can retake your diagnostic test anytime.',
+      retakeDiagnosticTest: 'Retake Diagnostic Test',
+      score: (pct) => `Score (${pct}%)`
+    },
+
+    // Day Detail
+    dayDetail: {
+      loading: 'Loading day module...',
+      unavailable: 'Day Module Unavailable',
+      couldNotLoad: 'Could not load day detail.',
+      backToRoadmap: 'Back to Roadmap',
+      completed: 'Completed',
+      markComplete: 'Mark as Complete',
+      overviewKeyConcepts: 'Module Overview & Key Concepts',
+      verifiedResources: 'Verified Study Resources',
+      videoGuide: 'Video Guide',
+      officialGuide: 'Official Guide',
+      readArticle: 'Read Article',
+      noResourcesFound: 'No video resources found for this topic yet — try refreshing later.'
+    },
+
+    // Diagnostic Review Page
+    review: {
+      loading: 'Loading diagnostic review...',
+      unavailable: 'Diagnostic Review Unavailable',
+      notFound: 'Review data could not be found.',
+      returnToOnboarding: 'Return to Onboarding',
+      testReview: 'Diagnostic Test Review',
+      assessment: 'Assessment',
+      translatingBreakdown: 'Translating review breakdown to Hindi via Sarvam Translate API...',
+      topicStrengthBreakdown: 'Topic Strength Breakdown',
+      detailedAnalysis: 'Question-by-Question Detailed Analysis',
+      generatingRoadmap: 'Generating AI Study Roadmap...',
+      generateMyRoadmap: 'Generate My Study Roadmap'
     },
 
     // Hero
@@ -54,8 +133,9 @@ export const translations = {
 
     // Why Choose
     whyChoose: {
-      kicker: 'Why Choose LMS',
-      heading: 'Everything a student needs in one place, supercharged by AI',
+      kicker: 'Why Choose Project Eklavya',
+      headingPart1: 'Everything a student needs in one place,',
+      headingHighlight: 'supercharged by AI',
       intro: 'Discover AI-powered tools and guidance that make learning more focused, trackable and enjoyable.',
       card1Title: 'Structured Pathways',
       card1Text: 'Step-by-step learning modules mapped for school grades, JEE and NEET readiness.',
@@ -119,7 +199,7 @@ export const translations = {
 
     // Footer
     footer: {
-      tagline: 'Frontend-only AI-powered LMS demo for Indian K-12, JEE and NEET learners.',
+      tagline: 'Frontend-only AI-powered Project Eklavya demo for Indian K-12, JEE and NEET learners.',
       product: 'Product',
       productCourses: 'Courses',
       productQuizzes: 'Quizzes',
@@ -164,7 +244,7 @@ export const translations = {
     aiForLearning: {
       kicker: 'AI For Bharat',
       heading: 'AI that speaks your child\'s language — literally',
-      subheading: 'Built for students in rural and small-town India, LMS uses homegrown Indian AI to teach, tutor, and explain — in the language your child understands best.',
+      subheading: 'Built for students in rural and small-town India, Project Eklavya uses homegrown Indian AI to teach, tutor, and explain — in the language your child understands best.',
       card1Title: 'Sarvam AI',
       card1Text: 'India\'s own AI models that understand and speak Hindi, Tamil, Telugu, Bengali, and more — so every child can learn by speaking, not just typing.',
       card2Title: 'Built for Bharat',
@@ -177,6 +257,7 @@ export const translations = {
   },
 
   hi: {
+    brand: 'प्रोजेक्ट एकलव्य',
     // Header / Nav
     nav: {
       home: 'होम',
@@ -189,7 +270,85 @@ export const translations = {
     header: {
       login: 'लॉग इन',
       getStarted: 'शुरू करें',
-      langToggleLabel: 'Switch to English'
+      langToggleLabel: 'Switch to English',
+      dashboard: 'डैशबोर्ड',
+      logout: 'लॉग आउट'
+    },
+
+    auth: {
+      tagline: 'भारत के लिए AI-संचालित शिक्षा',
+      loginTab: 'लॉग इन',
+      createAccountTab: 'खाता बनाएं',
+      fullName: 'पूरा नाम',
+      fullNamePlaceholder: 'उदा. अनन्या शर्मा',
+      emailAddress: 'ईमेल पता',
+      password: 'पासवर्ड',
+      processing: 'प्रोसेस हो रहा है...',
+      loginSubmit: 'अकाउंट में लॉग इन करें',
+      signupSubmit: 'मुफ़्त सीखना शुरू करें'
+    },
+
+    // Dashboard
+    dashboard: {
+      greeting: (name) => `नमस्ते, ${name}`,
+      studentCommandCenter: 'छात्र कमांड सेंटर',
+      retakeTest: 'फिर से टेस्ट लें',
+      studyRoadmap: 'अध्ययन रोडमैप',
+      diagnosticReview: 'डायग्नोस्टिक समीक्षा',
+      yourRoadmapProgress: 'आपकी रोडमैप प्रगति',
+      daysCompleted: (done, total) => `${total} में से ${done} दिन पूरे`,
+      day: (num) => `दिन ${num}`,
+      mins: (m) => `${m} मिनट`,
+      tailoredScheduleSubtitle: 'आपके डायग्नोस्टिक मूल्यांकन परिणामों के आधार पर तैयार अध्ययन कार्यक्रम।',
+      noRoadmapFound: 'कोई सक्रिय अध्ययन रोडमैप नहीं मिला',
+      noRoadmapSubtitle: 'अपना व्यक्तिगत AI रोडमैप बनाने के लिए डायग्नोस्टिक टेस्ट पूरा करें।',
+      startDiagnostic: 'ऑनबोर्डिंग डायग्नोस्टिक शुरू करें',
+      translatingRoadmap: 'सर्वम ट्रांसलेट API के माध्यम से अध्ययन रोडमैप का हिंदी में अनुवाद किया जा रहा है...',
+      viewYoutubeResource: 'YouTube संसाधन देखें',
+      diagnosticAssessmentResults: 'डायग्नोस्टिक मूल्यांकन परिणाम',
+      aiRecommendation: 'AI डायग्नोस्टिक सिफारिश',
+      questionBreakdown: 'डायग्नोस्टिक प्रश्न विश्लेषण',
+      question: (num) => `प्रश्न ${num}`,
+      correct: 'सही',
+      incorrect: 'गलत',
+      yourAnswer: 'आपका उत्तर',
+      correctAnswer: 'सही उत्तर',
+      explanation: 'व्याख्या:',
+      noReviewAvailable: 'कोई डायग्नोस्टिक समीक्षा उपलब्ध नहीं है',
+      noReviewSubtitle: 'यह रोडमैप विस्तृत डायग्नोस्टिक समीक्षा ट्रैकिंग से पहले बनाया गया था। आप किसी भी समय अपना डायग्नोस्टिक टेस्ट फिर से ले सकते हैं।',
+      retakeDiagnosticTest: 'फिर से डायग्नोस्टिक टेस्ट लें',
+      score: (pct) => `अंक (${pct}%)`
+    },
+
+    // Day Detail
+    dayDetail: {
+      loading: 'दिन का मॉड्यूल लोड हो रहा है...',
+      unavailable: 'दिन का मॉड्यूल उपलब्ध नहीं है',
+      couldNotLoad: 'दिन का विवरण लोड नहीं किया जा सका।',
+      backToRoadmap: 'रोडमैप पर वापस जाएँ',
+      completed: 'पूर्ण',
+      markComplete: 'पूर्ण के रूप में चिह्नित करें',
+      overviewKeyConcepts: 'मॉड्यूल अवलोकन और मुख्य अवधारणाएं',
+      verifiedResources: 'सत्यापित अध्ययन संसाधन',
+      videoGuide: 'वीडियो गाइड',
+      officialGuide: 'आधिकारिक गाइड',
+      readArticle: 'लेख पढ़ें',
+      noResourcesFound: 'इस विषय के लिए अभी कोई वीडियो संसाधन नहीं मिले — बाद में ताज़ा करने का प्रयास करें।'
+    },
+
+    // Diagnostic Review Page
+    review: {
+      loading: 'डायग्नोस्टिक समीक्षा लोड हो रही है...',
+      unavailable: 'डायग्नोस्टिक समीक्षा उपलब्ध नहीं है',
+      notFound: 'समीक्षा डेटा नहीं मिला।',
+      returnToOnboarding: 'ऑनबोर्डिंग पर वापस जाएँ',
+      testReview: 'डायग्नोस्टिक टेस्ट समीक्षा',
+      assessment: 'मूल्यांकन',
+      translatingBreakdown: 'सर्वम ट्रांसलेट API के माध्यम से समीक्षा का हिंदी में अनुवाद किया जा रहा है...',
+      topicStrengthBreakdown: 'विषय क्षमता विश्लेषण',
+      detailedAnalysis: 'प्रश्न-दर-प्रश्न विस्तृत विश्लेषण',
+      generatingRoadmap: 'AI अध्ययन रोडमैप तैयार किया जा रहा है...',
+      generateMyRoadmap: 'मेरा अध्ययन रोडमैप तैयार करें'
     },
 
     // Hero
@@ -231,27 +390,28 @@ export const translations = {
 
     // Why Choose
     whyChoose: {
-      kicker: 'LMS क्यों चुनें',
-      heading: 'एक छात्र को जो चाहिए, सब एक जगह, AI की शक्ति के साथ',
-      intro: 'ऐसे AI-आधारित टूल्स और मार्गदर्शन खोजें जो सीखने को अधिक केंद्रित, ट्रैक करने योग्य और आनंददायक बनाएँ।',
-      card1Title: 'संरचित पाथवे',
-      card1Text: 'स्कूल ग्रेड, JEE और NEET की तैयारी के लिए क्रमबद्ध लर्निंग मॉड्यूल।',
-      card2Title: 'प्रीमियम मेंटरशिप',
-      card2Text: 'भविष्य के बैकएंड शेड्यूलिंग और डाउट रूम के लिए वन-ऑन-वन गाइडेंस।',
-      card3Title: 'गहन एनालिटिक्स',
-      card3Text: 'प्रगति और क्विज़ परिणाम अभी क्लाइंट-साइड हैं, बाद में API से जुड़ सकते हैं।',
-      card4Title: 'स्मार्ट लर्निंग',
-      card4Text: 'YouTube लेसन, नोट्स, क्विज़ और मॉक-टेस्ट प्रैक्टिस एक ही फ्लो में।',
-      card5Title: 'अभ्यास और मूल्यांकन',
-      card5Text: 'कोर्स पेज पर विषय-विशिष्ट क्विज़ और तुरंत स्कोरिंग शामिल है।',
-      card6Title: 'उपलब्धि और उत्कृष्टता',
-      card6Text: 'नर्सरी से 12वीं, फाउंडेशन बैच, JEE Main/Advanced और NEET UG के लिए बना।',
-      card7Title: 'AI-आधारित शिक्षा',
-      card7Text: 'स्मार्ट AI के साथ दिन-प्रतिदिन अपनी आवश्यकता के अनुसार सटीक रूप से सीखें।',
-      card8Title: 'हिंदी अनुवाद',
-      card8Text: 'बिना संदर्भ खोए आसानी से अपनी पसंदीदा भाषा में सीखने के लिए हिंदी में टॉगल करें।',
-      card9Title: 'टेक्स्ट टू स्पीच',
-      card9Text: 'अंतर्निहित वॉयस रिकग्निशन और टेक्स्ट-टू-स्पीच सुविधाओं के साथ कंटेंट को आसानी से सुनें।'
+      kicker: 'प्रोजेक्ट एकलव्य क्यों चुनें',
+      headingPart1: 'एक छात्र को जो चाहिए, सब एक जगह,',
+      headingHighlight: 'AI की शक्ति के साथ',
+      intro: 'सीखें, अभ्यास करें, टेस्ट दें और आगे बढ़ें — सब एक सरल प्लेटफॉर्म में।',
+      card1Title: 'स्मार्ट लर्निंग',
+      card1Text: 'हर छात्र के स्तर के अनुसार एआई-संचालित पाठ।',
+      card2Title: 'लाइव डाउट सॉल्विंग',
+      card2Text: 'शिक्षकों और AI ट्यूटर्स से रीयल-टाइम सहायता प्राप्त करें।',
+      card3Title: 'प्रैक्टिस और क्विज़',
+      card3Text: 'इंटरैक्टिव क्विज़ के साथ अपने ज्ञान का परीक्षण करें।',
+      card4Title: 'ऑफ़लाइन एक्सेस',
+      card4Text: 'पाठ डाउनलोड करें और बिना इंटरनेट के भी सीखें।',
+      card5Title: 'प्रगति ट्रैकिंग',
+      card5Text: 'अपने प्रदर्शन को ट्रैक करें और हर दिन सुधार करें।',
+      card6Title: 'अभिभावक भागीदारी',
+      card6Text: 'माता-पिता प्रगति की निगरानी कर सकते हैं और जुड़े रह सकते हैं।',
+      card7Title: 'बहुभाषी सहायता',
+      card7Text: 'अपनी क्षेत्रीय भाषा में सीखें।',
+      card8Title: 'सुरक्षित और विज्ञापन-मुफ़्त',
+      card8Text: 'हर बच्चे के लिए एक सुरक्षित और केंद्रित वातावरण।',
+      card9Title: 'AI मेंटर',
+      card9Text: '24/7 उपलब्ध व्यक्तिगत मार्गदर्शन।'
     },
 
     // Courses section
@@ -296,7 +456,7 @@ export const translations = {
 
     // Footer
     footer: {
-      tagline: 'भारतीय K-12, JEE और NEET छात्रों के लिए फ्रंटएंड-ओनली AI-आधारित LMS डेमो।',
+      tagline: 'भारतीय K-12, JEE और NEET छात्रों के लिए फ्रंटएंड-ओनली AI-आधारित प्रोजेक्ट एकलव्य डेमो।',
       product: 'प्रोडक्ट',
       productCourses: 'कोर्स',
       productQuizzes: 'क्विज़',
@@ -341,7 +501,7 @@ export const translations = {
     aiForLearning: {
       kicker: 'भारत के लिए AI',
       heading: 'AI जो आपके बच्चे की भाषा बोलता है — सच में',
-      subheading: 'ग्रामीण और छोटे शहरों के छात्रों के लिए बना, LMS भारतीय AI का उपयोग करके आपके बच्चे की समझ की भाषा में पढ़ाता, सिखाता और समझाता है।',
+      subheading: 'ग्रामीण और छोटे शहरों के छात्रों के लिए बना, प्रोजेक्ट एकलव्य भारतीय AI का उपयोग करके आपके बच्चे की समझ की भाषा में पढ़ाता, सिखाता और समझाता है।',
       card1Title: 'Sarvam AI',
       card1Text: 'भारत के अपने AI मॉडल जो हिंदी, तमिल, तेलुगु, बंगाली और अन्य भाषाएँ समझते और बोलते हैं — ताकि हर बच्चा बोलकर सीख सके।',
       card2Title: 'भारत के लिए बना',

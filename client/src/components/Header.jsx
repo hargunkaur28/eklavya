@@ -1,31 +1,33 @@
-import { Menu, X } from 'lucide-react';
+import { Menu, X, User, LogOut, LayoutDashboard } from 'lucide-react';
 import GooeyNav from './GooeyNav';
 import { useLanguage } from '../context/LanguageContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+import { Link, useNavigate } from 'react-router-dom';
 
-export default function Header({ mobileOpen, setMobileOpen }) {
+export default function Header({ mobileOpen, setMobileOpen, onOpenAuthModal }) {
   const { t, language, toggleLanguage } = useLanguage();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   const navItems = [
-    { label: t('nav.home'), href: '#' },
-    { label: t('nav.courses'), href: '#courses' },
-    { label: t('nav.mentors'), href: '#mentors' },
-    { label: t('nav.successStories'), href: '#success-stories' },
-    { label: t('nav.pricing'), href: '#pricing' },
-    { label: t('nav.about'), href: '#about' }
+    { label: t('nav.home'), href: '/' },
+    { label: t('nav.courses'), href: '/#courses' },
+    { label: t('nav.mentors'), href: '/#why-choose' },
+    { label: t('nav.successStories'), href: '/#success-stories' },
+    { label: t('nav.about'), href: '/#why-choose' }
   ];
 
   const mobileNav = [
-    { label: t('nav.home'), href: '#' },
-    { label: t('nav.courses'), href: '#courses' },
-    { label: t('nav.mentors'), href: '#mentors' },
-    { label: t('nav.successStories'), href: '#success-stories' },
-    { label: t('nav.pricing'), href: '#pricing' },
-    { label: t('nav.about'), href: '#about' }
+    { label: t('nav.home'), href: '/' },
+    { label: t('nav.courses'), href: '/#courses' },
+    { label: t('nav.mentors'), href: '/#why-choose' },
+    { label: t('nav.successStories'), href: '/#success-stories' },
+    { label: t('nav.about'), href: '/#why-choose' }
   ];
 
   return (
     <header className="site-header">
-      <a className="brand" href="#">LMS</a>
+      <Link className="brand" to="/">{t('brand')}</Link>
       <div className="desktop-nav-wrapper">
         <GooeyNav items={navItems} />
       </div>
@@ -39,8 +41,30 @@ export default function Header({ mobileOpen, setMobileOpen }) {
           <span className={language === 'en' ? 'lang-active' : ''}>EN</span>
           <span className={language === 'hi' ? 'lang-active' : ''}>हि</span>
         </button>
-        <button className="ghost-button">{t('header.login')}</button>
-        <button className="primary-button">{t('header.getStarted')}</button>
+
+        {user ? (
+          <>
+            <button className="ghost-button" onClick={() => navigate('/dashboard')}>
+              <LayoutDashboard size={16} /> {t('header.dashboard')}
+            </button>
+            <div className="user-profile-badge" title={user.email}>
+              <User size={16} />
+              <span>{user.name.split(' ')[0]}</span>
+            </div>
+            <button className="icon-button" onClick={logout} title={t('header.logout')} aria-label={t('header.logout')}>
+              <LogOut size={18} />
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="ghost-button" onClick={() => onOpenAuthModal('login')}>
+              {t('header.login')}
+            </button>
+            <button className="primary-button" onClick={() => onOpenAuthModal('signup')}>
+              {t('header.getStarted')}
+            </button>
+          </>
+        )}
       </div>
 
       <div className="mobile-header-actions">
@@ -68,6 +92,20 @@ export default function Header({ mobileOpen, setMobileOpen }) {
               {item.label}
             </a>
           ))}
+          {user ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%', marginTop: '0.5rem' }}>
+              <button className="primary-button" onClick={() => { setMobileOpen(false); navigate('/dashboard'); }}>
+                {t('header.dashboard')}
+              </button>
+              <button className="ghost-button" style={{ border: '1px solid currentColor' }} onClick={() => { setMobileOpen(false); logout(); }}>
+                <LogOut size={16} /> {t('header.logout')}
+              </button>
+            </div>
+          ) : (
+            <button className="primary-button" onClick={() => { setMobileOpen(false); onOpenAuthModal('login'); }}>
+              {t('header.login')}
+            </button>
+          )}
         </div>
       )}
     </header>
