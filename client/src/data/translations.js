@@ -1,6 +1,8 @@
 export const translations = {
   en: {
     brand: 'Project Eklavya',
+    brandName: 'EKLAVYA',
+    brandSubheading: 'Ek Shikshak, Har Vidhyarthi',
     // Header / Nav
     nav: {
       home: 'Home',
@@ -258,6 +260,8 @@ export const translations = {
 
   hi: {
     brand: 'प्रोजेक्ट एकलव्य',
+    brandName: 'एकलव्य',
+    brandSubheading: 'एक शिक्षक, हर विद्यार्थी',
     // Header / Nav
     nav: {
       home: 'होम',
@@ -356,7 +360,7 @@ export const translations = {
       badge1: 'नर्सरी से 12वीं',
       badgeJee: 'JEE',
       badgeNeet: 'NEET',
-      titleLine1: 'AI-आधारित सीखना जो',
+      titleLine1: 'AI-आधारित शिक्षा, जो',
       titleHighlight: 'बढ़े',
       titleLine2: 'हर छात्र के साथ।',
       description: 'नर्सरी से कक्षा 12 तक की स्कूली शिक्षा, साथ ही JEE और NEET की तैयारी के लिए YouTube कोर्स पाथवे, क्विज़ और प्रगति-ट्रैकिंग कंटेंट।',

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle2, ChevronLeft, PlayCircle } from 'lucide-react';
 import Footer from './Footer.jsx';
+import EklavyaLogo from './EklavyaLogo.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 
 export default function CourseDetail({ course, onBack }) {
@@ -26,7 +27,7 @@ export default function CourseDetail({ course, onBack }) {
     <main>
       <header className="detail-header">
         <button className="back-button" onClick={onBack}><ChevronLeft size={18} /> {t('courseDetail.backToCourses')}</button>
-        <a className="brand" href="#" onClick={onBack}>{t('brand')}</a>
+        <a className="brand" href="#" onClick={onBack}><EklavyaLogo /></a>
       </header>
       <section className="detail-hero">
         <img src={course.image} alt={loc(course.imageAlt)} />

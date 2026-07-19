@@ -2,7 +2,25 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 
 const AuthContext = createContext(null);
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000/api';
+const API_BASE = (() => {
+  // Prefer explicit env var set at build/deploy time
+  if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
+
+  // At runtime, if we're in a browser and on localhost, use the local API
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://127.0.0.1:5000/api';
+    }
+
+    // In production (deployed site), prefer a relative `/api` path so the browser
+    // doesn't attempt to contact the visiting device's localhost.
+    return '/api';
+  }
+
+  // Fallback for non-browser environments
+  return 'http://127.0.0.1:5000/api';
+})();
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => sessionStorage.getItem('eklavya_token') || null);

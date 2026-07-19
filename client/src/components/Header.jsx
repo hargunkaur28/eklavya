@@ -1,5 +1,6 @@
 import { Menu, X, User, LogOut, LayoutDashboard } from 'lucide-react';
 import GooeyNav from './GooeyNav';
+import EklavyaLogo from './EklavyaLogo';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Link, useNavigate } from 'react-router-dom';
@@ -27,7 +28,9 @@ export default function Header({ mobileOpen, setMobileOpen, onOpenAuthModal }) {
 
   return (
     <header className="site-header">
-      <Link className="brand" to="/">{t('brand')}</Link>
+      <Link className="brand" to="/" aria-label="Project Eklavya Home">
+        <EklavyaLogo />
+      </Link>
       <div className="desktop-nav-wrapper">
         <GooeyNav items={navItems} />
       </div>

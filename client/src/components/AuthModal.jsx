@@ -3,6 +3,7 @@ import { X, Mail, Lock, User, ArrowRight, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useNavigate } from 'react-router-dom';
+import EklavyaLogo from './EklavyaLogo.jsx';
 
 export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
   const [tab, setTab] = useState(initialTab);
@@ -52,7 +53,9 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
         </button>
 
         <div className="auth-modal-header">
-          <h2>{t('brand')}</h2>
+          <div className="auth-modal-logo-wrapper">
+            <EklavyaLogo />
+          </div>
           <p>{t('auth.tagline')}</p>
         </div>
 
