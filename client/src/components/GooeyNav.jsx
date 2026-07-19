@@ -94,20 +94,56 @@ const GooeyNav = ({
   };
 
   const handleClick = (e, index) => {
+    const item = items[index];
     const liEl = e.currentTarget.parentElement;
-    if (activeIndex === index) return;
+
+    if (item && item.href) {
+      if (item.href === '#' || item.href === '/' || item.href === '/#') {
+        if (window.location.pathname === '/' || window.location.pathname === '') {
+          e.preventDefault();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          e.preventDefault();
+          window.location.href = '/';
+          return;
+        }
+      } else if (item.href.includes('#')) {
+        const hash = item.href.split('#')[1];
+        if (window.location.pathname === '/' || window.location.pathname === '') {
+          e.preventDefault();
+          if (hash) {
+            const targetEl = document.getElementById(hash);
+            if (targetEl) {
+              targetEl.scrollIntoView({ behavior: 'smooth' });
+            } else {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+          } else {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        }
+      }
+    }
 
     setActiveIndex(index);
     updateEffectPosition(liEl);
 
     if (filterRef.current) {
       const particles = filterRef.current.querySelectorAll('.particle');
-      particles.forEach(p => filterRef.current.removeChild(p));
+      particles.forEach(p => {
+        try {
+          filterRef.current.removeChild(p);
+        } catch {
+          // Ignore
+        }
+      });
+      filterRef.current.classList.remove('active');
+      void filterRef.current.offsetWidth;
+      filterRef.current.classList.add('active');
     }
 
     if (textRef.current) {
       textRef.current.classList.remove('active');
-
       void textRef.current.offsetWidth;
       textRef.current.classList.add('active');
     }
@@ -130,6 +166,7 @@ const GooeyNav = ({
     const activeLi = navRef.current.querySelectorAll('li')[activeIndex];
     if (activeLi) {
       updateEffectPosition(activeLi);
+      filterRef.current?.classList.add('active');
       textRef.current?.classList.add('active');
     }
 

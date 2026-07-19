@@ -11,19 +11,19 @@ export default function Header({ mobileOpen, setMobileOpen, onOpenAuthModal }) {
   const navigate = useNavigate();
 
   const navItems = [
-    { label: t('nav.home'), href: '/' },
-    { label: t('nav.courses'), href: '/#courses' },
-    { label: t('nav.mentors'), href: '/#why-choose' },
-    { label: t('nav.successStories'), href: '/#success-stories' },
-    { label: t('nav.about'), href: '/#why-choose' }
+    { label: t('nav.home'), href: '#' },
+    { label: t('nav.courses'), href: '#courses' },
+    { label: t('nav.mentors'), href: '#why-choose' },
+    { label: t('nav.successStories'), href: '#success-stories' },
+    { label: t('nav.about'), href: '#why-choose' }
   ];
 
   const mobileNav = [
-    { label: t('nav.home'), href: '/' },
-    { label: t('nav.courses'), href: '/#courses' },
-    { label: t('nav.mentors'), href: '/#why-choose' },
-    { label: t('nav.successStories'), href: '/#success-stories' },
-    { label: t('nav.about'), href: '/#why-choose' }
+    { label: t('nav.home'), href: '#' },
+    { label: t('nav.courses'), href: '#courses' },
+    { label: t('nav.mentors'), href: '#why-choose' },
+    { label: t('nav.successStories'), href: '#success-stories' },
+    { label: t('nav.about'), href: '#why-choose' }
   ];
 
   return (
