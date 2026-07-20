@@ -20,6 +20,7 @@ import Onboarding from './components/Onboarding.jsx';
 import RoadmapDashboard from './components/RoadmapDashboard.jsx';
 import DiagnosticReview from './pages/DiagnosticReview.jsx';
 import DayDetail from './pages/DayDetail.jsx';
+import ChatWidget from './components/ChatWidget.jsx';
 
 // Home Component with landing page sections
 function Home({ initialAuthTab = null }) {
@@ -217,6 +218,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <ScrollToTop />
+          <ChatWidget />
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/courses" element={<Home />} />

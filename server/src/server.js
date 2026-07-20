@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
 import diagnosticRoutes from './routes/diagnostic.js';
 import roadmapRoutes from './routes/roadmap.js';
+import chatRoutes from './routes/chat.js';
 import { startTempAudioCleanup, stopTempAudioCleanup } from './utils/textToSpeech.js';
 
 dotenv.config();
@@ -44,6 +45,7 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api/auth', authRoutes);
 app.use('/api/diagnostic', diagnosticRoutes);
 app.use('/api/roadmap', roadmapRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
