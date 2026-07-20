@@ -10,6 +10,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -26,7 +27,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
 
     try {
       if (tab === 'login') {
-        const { roadmap } = await login(email, password);
+        const { roadmap } = await login(email, password, rememberMe);
         onClose();
         if (roadmap) {
           navigate('/dashboard');
@@ -34,7 +35,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
           navigate('/onboarding');
         }
       } else {
-        await signup(name, email, password);
+        await signup(name, email, password, rememberMe);
         onClose();
         navigate('/onboarding');
       }
@@ -120,6 +121,19 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'login' }) {
                 minLength={6}
               />
             </div>
+          </div>
+
+          <div className="auth-remember-row" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '4px 0 14px', fontSize: '0.86rem', color: '#6B6357', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              id="rememberMe"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              style={{ accentColor: '#2F6B3A', cursor: 'pointer', width: '16px', height: '16px' }}
+            />
+            <label htmlFor="rememberMe" style={{ cursor: 'pointer', userSelect: 'none' }}>
+              {t('auth.rememberMe')}
+            </label>
           </div>
 
           <button type="submit" className="auth-submit-btn" disabled={isSubmitting}>

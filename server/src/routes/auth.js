@@ -10,7 +10,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'eklavya_super_secret_jwt_key_2026'
 // Signup
 router.post('/signup', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, rememberMe } = req.body;
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Name, email and password are required.' });
     }
@@ -27,7 +27,8 @@ router.post('/signup', async (req, res) => {
       passwordHash
     });
 
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
+    const tokenDuration = rememberMe === false ? '30d' : '90d';
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: tokenDuration });
     res.status(201).json({
       token,
       user: { id: user._id, name: user.name, email: user.email }
@@ -41,7 +42,7 @@ router.post('/signup', async (req, res) => {
 // Login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, rememberMe } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
@@ -56,7 +57,8 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Invalid email or password.' });
     }
 
-    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '7d' });
+    const tokenDuration = rememberMe === false ? '30d' : '90d';
+    const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: tokenDuration });
     res.json({
       token,
       user: { id: user._id, name: user.name, email: user.email }

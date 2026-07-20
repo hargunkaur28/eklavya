@@ -6,10 +6,10 @@ import './AIForLearning.css';
 export default function AIForLearning() {
   const { t } = useLanguage();
 
-  /** Wrap every occurrence of "Sarvam AI" in a highlight span */
+  /** Wrap every occurrence of "Sarvam AI" or "सर्वम AI" in a highlight span */
   const highlightSarvam = (text) => {
     if (!text) return '';
-    const keyword = 'Sarvam AI';
+    const keyword = text.includes('सर्वम AI') ? 'सर्वम AI' : 'Sarvam AI';
     const idx = text.indexOf(keyword);
     if (idx === -1) return text;
     return (

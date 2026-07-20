@@ -22,15 +22,46 @@ const API_BASE = (() => {
   return 'http://127.0.0.1:5000/api';
 })();
 
+const getStoredToken = () => {
+  try {
+    return localStorage.getItem('eklavya_token') || sessionStorage.getItem('eklavya_token') || null;
+  } catch {
+    return null;
+  }
+};
+
+const storeToken = (token, rememberMe = true) => {
+  try {
+    if (rememberMe) {
+      localStorage.setItem('eklavya_token', token);
+      sessionStorage.removeItem('eklavya_token');
+    } else {
+      sessionStorage.setItem('eklavya_token', token);
+      localStorage.removeItem('eklavya_token');
+    }
+  } catch {
+    // Storage fallback
+  }
+};
+
+const removeStoredToken = () => {
+  try {
+    localStorage.removeItem('eklavya_token');
+    sessionStorage.removeItem('eklavya_token');
+  } catch {
+    // Storage fallback
+  }
+};
+
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => sessionStorage.getItem('eklavya_token') || null);
+  const [token, setToken] = useState(() => getStoredToken());
   const [user, setUser] = useState(null);
   const [activeRoadmap, setActiveRoadmap] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Helper fetch with auth token
   const authFetch = useCallback(async (endpoint, options = {}) => {
-    const currentToken = sessionStorage.getItem('eklavya_token');
+    const currentToken = getStoredToken();
     const headers = {
       'Content-Type': 'application/json',
       ...(options.headers || {})
@@ -61,7 +92,7 @@ export function AuthProvider({ children }) {
   }, [authFetch]);
 
   const refreshUser = useCallback(async () => {
-    const storedToken = sessionStorage.getItem('eklavya_token');
+    const storedToken = getStoredToken();
     if (!storedToken) {
       setUser(null);
       setActiveRoadmap(null);
@@ -77,7 +108,7 @@ export function AuthProvider({ children }) {
         await refreshRoadmap();
       } else {
         // Clear invalid token
-        sessionStorage.removeItem('eklavya_token');
+        removeStoredToken();
         setToken(null);
         setUser(null);
         setActiveRoadmap(null);
@@ -93,11 +124,11 @@ export function AuthProvider({ children }) {
     refreshUser();
   }, [refreshUser]);
 
-  const login = async (email, password) => {
+  const login = async (email, password, rememberMe = true) => {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password, rememberMe })
     });
 
     const data = await res.json();
@@ -105,7 +136,7 @@ export function AuthProvider({ children }) {
       throw new Error(data.error || 'Login failed');
     }
 
-    sessionStorage.setItem('eklavya_token', data.token);
+    storeToken(data.token, rememberMe);
     setToken(data.token);
     setUser(data.user);
 
@@ -129,11 +160,11 @@ export function AuthProvider({ children }) {
     return { user: data.user, roadmap };
   };
 
-  const signup = async (name, email, password) => {
+  const signup = async (name, email, password, rememberMe = true) => {
     const res = await fetch(`${API_BASE}/auth/signup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password })
+      body: JSON.stringify({ name, email, password, rememberMe })
     });
 
     const data = await res.json();
@@ -141,7 +172,7 @@ export function AuthProvider({ children }) {
       throw new Error(data.error || 'Signup failed');
     }
 
-    sessionStorage.setItem('eklavya_token', data.token);
+    storeToken(data.token, rememberMe);
     setToken(data.token);
     setUser(data.user);
     setActiveRoadmap(null);
@@ -149,7 +180,7 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
-    sessionStorage.removeItem('eklavya_token');
+    removeStoredToken();
     setToken(null);
     setUser(null);
     setActiveRoadmap(null);

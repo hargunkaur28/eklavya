@@ -30,7 +30,8 @@ export const translations = {
       password: 'Password',
       processing: 'Processing...',
       loginSubmit: 'Log In to Account',
-      signupSubmit: 'Start Learning Free'
+      signupSubmit: 'Start Learning Free',
+      rememberMe: 'Remember me (keep me logged in for 90 days)'
     },
 
     // Dashboard
@@ -288,8 +289,9 @@ export const translations = {
       emailAddress: 'ईमेल पता',
       password: 'पासवर्ड',
       processing: 'प्रोसेस हो रहा है...',
-      loginSubmit: 'अकाउंट में लॉग इन करें',
-      signupSubmit: 'मुफ़्त सीखना शुरू करें'
+      loginSubmit: 'खाते में लॉग इन करें',
+      signupSubmit: 'निःशुल्क सीखना शुरू करें',
+      rememberMe: 'मुझे याद रखें (90 दिनों तक लॉग इन रखें)'
     },
 
     // Dashboard
@@ -506,8 +508,8 @@ export const translations = {
       kicker: 'भारत के लिए AI',
       heading: 'AI जो आपके बच्चे की भाषा बोलता है — सच में',
       subheading: 'ग्रामीण और छोटे शहरों के छात्रों के लिए बना, प्रोजेक्ट एकलव्य भारतीय AI का उपयोग करके आपके बच्चे की समझ की भाषा में पढ़ाता, सिखाता और समझाता है।',
-      card1Title: 'Sarvam AI',
-      card1Text: 'भारत के अपने AI मॉडल जो हिंदी, तमिल, तेलुगु, बंगाली और अन्य भाषाएँ समझते और बोलते हैं — ताकि हर बच्चा बोलकर सीख सके।',
+      card1Title: 'सर्वम AI',
+      card1Text: 'भारत के अपने सर्वम AI मॉडल जो हिंदी, तमिल, तेलुगु, बंगाली और अन्य भाषाएँ समझते और बोलते हैं — ताकि हर बच्चा बोलकर सीख सके।',
       card2Title: 'भारत के लिए बना',
       card2Text: 'भारतीय पाठ्यक्रम, भारतीय उच्चारण और ग्रामीण कक्षा की ज़रूरतों के अनुसार डिज़ाइन — सिलिकॉन वैली से आयातित नहीं।',
       card3Title: 'AI ट्यूटर',
