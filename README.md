@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-**Project Eklavya** (*Ek Shikshak, Har Vidhyarthi*) is a personalized, AI-driven learning platform built specifically for Indian students preparing for Class 10 Science, Class 11 JEE Foundation, and Class 12 NEET Biology. The platform assesses a student's current knowledge through an interactive diagnostic quiz, identifies strong and weak concept areas, and automatically constructs a day-by-day study roadmap. Each study day combines curated educational YouTube videos from trusted Indian channels (Physics Wallah, Vedantu, Unacademy, Khan Academy India, Aakash) with AI-generated lesson content and a per-day module quiz — a day is completed only once its video is watched and its quiz passed. Beyond the core roadmap, the dashboard tracks video and quiz progress, flags weak sub-topics from quiz results, adaptively inserts remediation days when a student stays stuck, supports multiple subjects per student, offers a standalone practice mode, and keeps students consistent with account-wide study streaks and a "continue where you left off" prompt. The platform features bilingual support (English and Hindi) across UI, quizzes, lessons, and weak-topic labels, voice input and text-to-speech read-aloud, and a floating site-wide AI assistant widget.
+**Project Eklavya** (*Ek Shikshak, Har Vidhyarthi*) is a personalized, AI-driven learning platform built specifically for Indian students preparing for Class 10 Science, Class 11 JEE Foundation, and Class 12 NEET Biology. The platform assesses a student's current knowledge through an interactive diagnostic quiz, identifies strong and weak concept areas, and automatically constructs a day-by-day study roadmap. Each study day combines curated educational YouTube videos from trusted Indian channels (Physics Wallah, Vedantu, Unacademy, Khan Academy India, Aakash) with AI-generated lesson content and a per-day module quiz — a day is completed only once its video is watched and its quiz passed. Beyond the core roadmap, the dashboard tracks video and quiz progress, flags weak sub-topics from quiz results, adaptively inserts remediation days when a student stays stuck, supports multiple subjects per student, offers a standalone practice mode, and keeps students consistent with account-wide study streaks and a "continue where you left off" prompt. The platform features bilingual support (English and Hindi) across UI, quizzes, lessons, and weak-topic labels, voice input and text-to-speech read-aloud, and a floating site-wide AI assistant widget. It also has a role-based account system — students, an optional **read-only parent login** per student, and an environment-configured **admin console** — plus student profile editing with server-side Cloudinary photo uploads.
 
 ---
 
@@ -141,15 +141,46 @@
   - Triggered inside `POST /api/roadmap/:id/day/:dayNumber/quiz/submit`
   - `Roadmap.js` day `isRemediation`, `remediationForSubtopic`, `remediationFromDay`
 
-### 13. User Authentication & Session Management
-- **What it does:** Secure user signup and login using password hashing (bcryptjs) and JSON Web Tokens (JWT). Includes a **Remember Me** option that extends session lifetime to 90 days (stored in persistent `localStorage`), while standard sessions default to 30 days.
+### 13. User Authentication, Roles & Session Management
+- **What it does:** Secure signup and login using password hashing (bcryptjs) and JSON Web Tokens (JWT), on **dedicated `/login` and `/signup` pages** (the former modal was retired). Includes a **Remember Me** option that extends session lifetime to 90 days (persistent `localStorage`); standard sessions default to 30 days (`sessionStorage`).
+  - **Roles:** every account carries a `role` of `student` (default), `parent`, or `admin`. The JWT encodes the role, and a reusable `requireRole()` middleware gates role-specific endpoints (returns `403` on mismatch). Tokens issued before roles existed default safely to `student`.
+  - **Password policy:** a shared validator enforces **≥8 characters with an uppercase letter, a number, and a symbol** on signup and every password change.
+  - **Brute-force protection:** login is rate-limited per IP on **failed** attempts only (a shared sliding-window limiter), so honest typos and shared IPs aren't penalised while password-guessing is stopped.
+  - **Change password:** any session can change its own password after re-verifying the current one; the server never returns which factor was wrong.
+  - **Secrets:** `JWT_SECRET` is loaded strictly from the environment (no hardcoded fallback) and the server refuses to boot without it.
 - **Components/Pages:**
-  - `client/src/components/AuthModal.jsx` (Login / Signup modal dialog)
-  - `client/src/components/ProtectedRoute.jsx` (Route guard)
-  - `client/src/context/AuthContext.jsx` (Session token management)
+  - `client/src/pages/AuthPage.jsx` (login / signup page), `client/src/pages/ChangePasswordPage.jsx`
+  - `client/src/components/ProtectedRoute.jsx` (route guard; also enforces a forced parent password change — Feature 14)
+  - `client/src/context/AuthContext.jsx` (session token + role state)
 - **Backend Routes & Utilities:**
-  - `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/auth/me`
-  - `server/src/routes/auth.js` & `server/src/middleware/auth.js`
+  - `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/change-password`
+  - `server/src/routes/auth.js`, `server/src/middleware/auth.js` (`authMiddleware` + `requireRole`)
+  - `server/src/utils/validatePassword.js` (shared policy) & `server/src/utils/rateLimiter.js` (shared limiter)
+
+### 14. Parent Accounts & Read-Only Parent Dashboard
+- **What it does:** A student can create a **parent login** on demand from their dashboard **Settings → Parent Login** card. The server generates a memorable, word-based temporary password (e.g. `TigerCloudRiver#4728`) using a CSPRNG, stores only its bcrypt hash, and shows the plaintext **once**. The parent signs in with the **same email as the student** but their own password (Option B: one `User` document, an additional `parentPasswordHash` field) — a match resolves the session to `role: 'parent'`. On first login the parent is **forced to set their own password** before anything else (enforced both client-side and by a server gate). The **parent dashboard is strictly read-only**: it shows the child's roadmap progress, streak, and weak topics, and can change only its *own* password (not the child's email). Scoping is intrinsic — because the parent session shares the student's `userId`, every read is automatically limited to that one child, and all mutating endpoints reject parent sessions.
+- **Components/Pages:**
+  - `client/src/components/ParentAccessCard.jsx` (generate / regenerate parent access), `client/src/components/ParentDashboard.jsx`
+- **Backend Routes & Utilities:**
+  - `POST /api/auth/parent/generate` (student-only) & `server/src/utils/generateTempPassword.js`
+  - `User.js` fields `parentPasswordHash`, `parentMustChangePassword`; `parentPasswordChangeGate` in `middleware/auth.js`
+
+### 15. Admin Console
+- **What it does:** An environment-configured admin panel (no admin row in the database) for viewing **parent-linkage status** and, per student, exactly what a parent can see (roadmaps, weak topics, activity) — read-only, nothing more. Admin identity comes from env vars; the JWT carries `role: 'admin'` with **no `userId`**, so it structurally cannot address any single user's data through the normal endpoints. Admin sign-in requires **three factors together — email + password + security code** — checked as a unit with one generic error and its own stricter rate limit. Admin can sign in from the regular `/login` (the security-code field appears once the admin email + password are correct) or the dedicated `/admin/login`. From **Settings**, the admin can change its own email / password / security code (gated by the current security code); these overrides are persisted in MongoDB (`AdminConfig`) so they survive restarts, taking precedence over the env bootstrap.
+- **Components/Pages:**
+  - `client/src/components/AdminDashboard.jsx`, `client/src/components/AdminSettings.jsx`, `client/src/pages/AdminLoginPage.jsx`
+- **Backend Routes & Utilities:**
+  - `POST /api/admin/login`, `POST /api/admin/precheck`, `PATCH /api/admin/credentials`
+  - `GET /api/admin/parent-links`, `GET /api/admin/student/:studentId`, `GET /api/admin/student/:studentId/roadmap/:roadmapId/weak-topics`, `GET /api/admin/student/:studentId/activity`
+  - `server/src/routes/admin.js`, `server/src/utils/adminCreds.js`, `server/src/models/AdminConfig.js`
+
+### 16. Student Profile Editing & Profile Photo
+- **What it does:** From **Settings → Edit Profile**, a student can update their **name**, **email**, and **profile photo**. Changing the email re-verifies the current password and is checked for uniqueness server-side (a clean `400`, never a duplicate-key crash); because of Option B, it atomically becomes the parent's login email too, with a clear warning shown when a parent is linked. Profile photos are **uploaded server-side** to Cloudinary (the API secret never reaches the client): the file is validated by its real magic bytes (not the spoofable extension/Content-Type — JPEG/PNG/WebP only), hard-capped at 2 MB, resized and stripped of EXIF metadata, then stored as a URL only (a deterministic per-user public id, so replacing overwrites in place). Parent and admin views render the photo read-only.
+- **Components/Pages:**
+  - `client/src/pages/ProfilePage.jsx`, `client/src/components/Avatar.jsx`, `client/src/components/DashboardShell.jsx` (shared parent/admin chrome)
+- **Backend Routes & Utilities:**
+  - `PATCH /api/auth/profile`, `POST /api/auth/profile/photo`, `DELETE /api/auth/profile/photo`
+  - `server/src/utils/cloudinary.js`, `server/src/utils/imageSniff.js`; `User.js` field `photoUrl`
 
 ---
 
@@ -166,8 +197,9 @@
 - **Runtime:** Node.js (ES Modules `type: "module"`)
 - **Web Framework:** Express 4.21.2
 - **Database:** MongoDB with Mongoose 8.12.0 ODM
-- **Authentication:** `jsonwebtoken` 9.0.2 & `bcryptjs` 3.0.2
-- **File Uploads:** `multer` 2.2.0 (memory storage for STT audio processing)
+- **Authentication:** `jsonwebtoken` 9.0.2 & `bcryptjs` 3.0.2 (roles + `requireRole` middleware)
+- **File Uploads:** `multer` 2.2.0 (memory storage for STT audio and profile-photo processing)
+- **Media Storage:** `cloudinary` (server-side profile-photo upload, resize & EXIF stripping)
 - **CORS & Config:** `cors` 2.8.5 & `dotenv` 16.4.7
 
 ### External APIs & Integrations
@@ -188,10 +220,10 @@ project-eklavya/
 │   ├── public/                 # Static public assets (e.g. chatbot-avatar.png)
 │   ├── src/
 │   │   ├── assets/             # Component image assets
-│   │   ├── components/         # Reusable React components (Header, ChatWidget, SpeakerButton, RoadmapDashboard, DashboardSidebar, YouTubePlayer, ModuleQuiz, ProgressWeakTopics, PracticeMode, StreakWidget, etc.)
+│   │   ├── components/         # Reusable React components (Header, ChatWidget, SpeakerButton, RoadmapDashboard, DashboardSidebar, YouTubePlayer, ModuleQuiz, ProgressWeakTopics, PracticeMode, StreakWidget, ParentAccessCard, ParentDashboard, AdminDashboard, AdminSettings, DashboardShell, Avatar, etc.)
 │   │   ├── context/            # React Context providers (AuthContext.jsx, LanguageContext.jsx)
 │   │   ├── data/               # Course catalog (courses.js) and translation dictionary (translations.js)
-│   │   ├── pages/              # Top-level page views (DiagnosticReview.jsx, DayDetail.jsx)
+│   │   ├── pages/              # Top-level page views (DiagnosticReview.jsx, DayDetail.jsx, AuthPage.jsx, ChangePasswordPage.jsx, ProfilePage.jsx, AdminLoginPage.jsx)
 │   │   ├── utils/              # Client utility helpers (subject & topic translation mappers, streak.js)
 │   │   ├── App.jsx             # Main Router configuration & global ChatWidget mount
 │   │   ├── main.jsx            # React root entry point
@@ -202,11 +234,11 @@ project-eklavya/
 │   ├── uploads/                # Disk cache for generated audio WAV files (uploads/audio/ & uploads/audio/temp/)
 │   ├── src/
 │   │   ├── data/               # Static route catalog (siteRoutes.js) & grounding knowledge (siteKnowledge.js)
-│   │   ├── middleware/         # Auth verification middleware (auth.js)
-│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession)
-│   │   ├── routes/             # Express API routes (auth.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
+│   │   ├── middleware/         # Auth middleware (auth.js — authMiddleware, requireRole, parentPasswordChangeGate)
+│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession, AdminConfig)
+│   │   ├── routes/             # Express API routes (auth.js, admin.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
 │   │   ├── scripts/            # Database remediation and utility maintenance scripts
-│   │   ├── utils/              # Backend integrations (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js)
+│   │   ├── utils/              # Backend integrations & helpers (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js, validatePassword.js, rateLimiter.js, generateTempPassword.js, weakTopics.js, cloudinary.js, imageSniff.js, adminCreds.js)
 │   │   └── server.js           # Server entry point, MongoDB connection, & graceful shutdown
 │   └── package.json            # Server dependencies and scripts
 │
@@ -219,9 +251,14 @@ project-eklavya/
 
 | Method | Path | Auth Required | Purpose |
 | :--- | :--- | :---: | :--- |
-| `POST` | `/api/auth/signup` | No | Register new user (accepts `name`, `email`, `password`, `rememberMe`) |
-| `POST` | `/api/auth/login` | No | Authenticate user (accepts `email`, `password`, `rememberMe`) |
-| `GET` | `/api/auth/me` | Yes | Get currently authenticated user profile |
+| `POST` | `/api/auth/signup` | No | Register new user — student role (accepts `name`, `email`, `password`, `rememberMe`; enforces the password policy) |
+| `POST` | `/api/auth/login` | No (Rate limited) | Authenticate a student **or** parent (same email, different password); returns the session `role` and a `mustChangePassword` flag for a parent on a temp password |
+| `GET` | `/api/auth/me` | Yes | Get the current session's profile (role, `parentLinked`, `photoUrl`, `mustChangePassword`) |
+| `POST` | `/api/auth/change-password` | Yes | Change the current session's own password (re-verifies the current one) |
+| `POST` | `/api/auth/parent/generate` | Yes (student) | Create/regenerate parent access — returns a one-time word-based temp password |
+| `PATCH` | `/api/auth/profile` | Yes (student) | Update own name and/or email (email change re-verifies password + uniqueness) |
+| `POST` | `/api/auth/profile/photo` | Yes (student) | Upload/replace profile photo (server-side Cloudinary; magic-byte + 2 MB validation) |
+| `DELETE` | `/api/auth/profile/photo` | Yes (student) | Remove the profile photo |
 | `POST` | `/api/diagnostic/generate` | Yes | Generate 6-question diagnostic assessment quiz |
 | `POST` | `/api/diagnostic/submit` | Yes | Submit diagnostic answers, calculate score, & generate explanations |
 | `POST` | `/api/diagnostic/:id/translate` | Yes | Translate diagnostic assessment result into Hindi via Sarvam AI |
@@ -245,6 +282,13 @@ project-eklavya/
 | `POST` | `/api/practice/generate` | Yes | Generate a fresh practice quiz for a subject + topic |
 | `POST` | `/api/practice/submit` | Yes | Score a practice quiz (no roadmap/weak-topic side effects) |
 | `GET` | `/api/activity` | Yes | Account-wide study-activity dates (for streak display) |
+| `POST` | `/api/admin/login` | No (Rate limited) | Admin sign-in — requires email + password + security code together |
+| `POST` | `/api/admin/precheck` | No (Rate limited) | Returns whether an email+password match the admin (used by `/login` to reveal the security-code field) |
+| `PATCH` | `/api/admin/credentials` | Yes (admin) | Change admin email/password/security code (gated by the current security code) |
+| `GET` | `/api/admin/parent-links` | Yes (admin) | Parent-linkage status across all students |
+| `GET` | `/api/admin/student/:studentId` | Yes (admin) | A student's active roadmaps (read-only) |
+| `GET` | `/api/admin/student/:studentId/roadmap/:roadmapId/weak-topics` | Yes (admin) | A student's weak topics (read-only) |
+| `GET` | `/api/admin/student/:studentId/activity` | Yes (admin) | A student's study-activity dates (read-only) |
 | `POST` | `/api/chat/message` | Optional (Rate limited) | Process AI Chatbot query (intent detection, Q&A, navigation, video search, localization) |
 | `POST` | `/api/chat/tts` | Optional (Rate limited) | Synthesize base64 audio for chatbot response via Sarvam Bulbul v3 |
 | `POST` | `/api/chat/stt` | Optional (Rate limited) | Speech-to-text audio upload processing via Sarvam saaras v3 |
@@ -268,6 +312,18 @@ JWT_SECRET=replace_with_a_long_random_secret
 GROQ_API_KEY=gsk_your_groq_api_key_here
 SARVAM_API_KEY=your_sarvam_api_key_here
 YOUTUBE_API_KEY=your_youtube_data_api_v3_key_here
+
+# Admin console (optional). Setting ADMIN_EMAIL enables /api/admin/*; if set, the
+# server refuses to boot unless ADMIN_PASSWORD and ADMIN_SECURITY_CODE are also set.
+# (Once changed from the admin Settings UI, a MongoDB override takes precedence.)
+ADMIN_EMAIL=
+ADMIN_PASSWORD=
+ADMIN_SECURITY_CODE=
+
+# Cloudinary — server-side profile-photo uploads (the secret never reaches the client)
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
 
 # Frontend URL (for Production CORS setup)
 FRONTEND_URL=http://localhost:5173
@@ -321,3 +377,5 @@ Project Eklavya is built with multi-tiered fallback architecture to ensure unint
    `Groq AI llama-3.3-70b-versatile` $\rightarrow$ `Handwritten Question Banks / Structured Fallback Schedule`
 5. **Database Fallback:**  
    If MongoDB is unreachable at server startup, the server logs a warning and enters offline demo mode without crashing.
+6. **Optional feature gating:**  
+   The **admin console** is disabled (its routes return `404`) unless `ADMIN_EMAIL` is configured; if it *is* set, the server fails fast at boot when the password/code are missing. **Profile-photo upload** returns `503` when Cloudinary isn't configured, and the UI falls back to a generic avatar icon whenever a user has no photo.
