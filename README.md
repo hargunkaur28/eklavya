@@ -261,8 +261,8 @@ Create a `.env` file in the `server/` directory containing the following variabl
 PORT=5000
 MONGODB_URI=mongodb://127.0.0.1:27017/project_eklavya
 
-# Security
-JWT_SECRET=eklavya_super_secret_jwt_key_2026
+# Security — generate a long random value, e.g. `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`
+JWT_SECRET=replace_with_a_long_random_secret
 
 # External AI & Data APIs
 GROQ_API_KEY=gsk_your_groq_api_key_here

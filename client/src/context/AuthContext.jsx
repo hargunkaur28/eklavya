@@ -67,6 +67,9 @@ export function AuthProvider({ children }) {
   const [activeRoadmap, setActiveRoadmapState] = useState(null);
   const [roadmaps, setRoadmaps] = useState([]); // Phase 5: all active roadmaps
   const [loading, setLoading] = useState(true);
+  // Phase 4: a parent session that still holds its temporary password. While true,
+  // the app forces the change-password screen (mirrors the server-side gate).
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   // Keep the selected roadmap and the roadmaps list in sync when a component
   // updates the active roadmap (e.g. after toggling a day complete).
@@ -143,6 +146,7 @@ export function AuthProvider({ children }) {
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
+        setMustChangePassword(!!data.mustChangePassword);
         await refreshRoadmap();
       } else {
         // Clear invalid token
@@ -178,6 +182,7 @@ export function AuthProvider({ children }) {
     storeToken(data.token, rememberMe);
     setToken(data.token);
     setUser(data.user);
+    setMustChangePassword(!!data.mustChangePassword); // Phase 4
 
     let roadmap = null;
     try {
@@ -186,7 +191,128 @@ export function AuthProvider({ children }) {
       console.warn('Failed to fetch roadmaps on login:', err.message);
     }
 
-    return { user: data.user, roadmap };
+    return { user: data.user, roadmap, mustChangePassword: !!data.mustChangePassword };
+  };
+
+  // Phase 6: admin login (separate route + 3 factors). The admin token is stored
+  // in sessionStorage only (rememberMe=false) — high-value + short-lived, never
+  // persisted across browser sessions. Replaces any student/parent token in this
+  // browser (one session at a time).
+  const adminLogin = async (email, password, securityCode) => {
+    const res = await fetch(`${API_BASE}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, securityCode })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Admin login failed');
+    }
+    storeToken(data.token, false); // sessionStorage only
+    setToken(data.token);
+    setUser(data.user);
+    setActiveRoadmapState(null);
+    setRoadmaps([]);
+    setMustChangePassword(false);
+    return data;
+  };
+
+  // Phase 7: a student edits their own name/email. On success the returned user
+  // (with the possibly-new email) replaces the context user so the UI updates
+  // immediately. The JWT is unaffected (it carries userId+role, not email), so
+  // no re-login is needed.
+  const updateProfile = async ({ name, email, currentPassword }) => {
+    const res = await authFetch('/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({ name, email, currentPassword })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not update profile.');
+    }
+    setUser((prev) => ({ ...prev, ...data.user }));
+    return data.user;
+  };
+
+  // Phase 7.5: upload/replace the student's profile photo. Sent as multipart —
+  // we deliberately do NOT set Content-Type so the browser adds the multipart
+  // boundary itself (authFetch always forces JSON, so this uses fetch directly).
+  const uploadProfilePhoto = async (file) => {
+    const currentToken = getStoredToken();
+    const form = new FormData();
+    form.append('photo', file);
+    const res = await fetch(`${API_BASE}/auth/profile/photo`, {
+      method: 'POST',
+      headers: currentToken ? { Authorization: `Bearer ${currentToken}` } : {},
+      body: form
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not upload photo.');
+    }
+    setUser((prev) => ({ ...prev, photoUrl: data.photoUrl }));
+    return data.photoUrl;
+  };
+
+  // Phase 7.5: remove the student's profile photo (falls back to the icon).
+  const removeProfilePhoto = async () => {
+    const res = await authFetch('/auth/profile/photo', { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not remove photo.');
+    }
+    setUser((prev) => ({ ...prev, photoUrl: null }));
+  };
+
+  // Phase 7: used by the /login page — returns true if the given email+password
+  // match the admin credentials (so the page can reveal the security-code field).
+  const adminPrecheck = async (email, password) => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/precheck`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (!res.ok) return false; // 404 (admin disabled), 429, etc. → don't reveal
+      const data = await res.json().catch(() => ({}));
+      return !!data.needsCode;
+    } catch {
+      return false;
+    }
+  };
+
+  // Phase 7: admin edits its own email / password / security code. Requires the
+  // current security code (verified server-side) to authorize the change.
+  const updateAdminCredentials = async ({ currentSecurityCode, newEmail, newPassword, newSecurityCode }) => {
+    const res = await authFetch('/admin/credentials', {
+      method: 'PATCH',
+      body: JSON.stringify({ currentSecurityCode, newEmail, newPassword, newSecurityCode })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not update admin credentials.');
+    }
+    if (data.email) setUser((prev) => ({ ...prev, email: data.email }));
+    return data;
+  };
+
+  // Phase 4: change the current session's own password (re-verified server-side).
+  // On success, clears the forced-change flag so routing releases the user.
+  const changePassword = async (currentPassword, newPassword) => {
+    const res = await authFetch('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.error || 'Could not change password.');
+    }
+    setMustChangePassword(false);
+    // A parent's login-time roadmap fetch was blocked while they still held the
+    // temp password (server gate). Now that the flag is cleared, re-fetch so the
+    // parent dashboard has data without needing a full page reload.
+    try { await refreshRoadmap(); } catch { /* non-fatal */ }
+    return data;
   };
 
   const signup = async (name, email, password, rememberMe = true) => {
@@ -216,6 +342,7 @@ export function AuthProvider({ children }) {
     setUser(null);
     setActiveRoadmapState(null);
     setRoadmaps([]);
+    setMustChangePassword(false);
   };
 
   return (
@@ -228,9 +355,17 @@ export function AuthProvider({ children }) {
         roadmaps,
         selectRoadmap,
         loading,
+        mustChangePassword,
         login,
         signup,
         logout,
+        adminLogin,
+        adminPrecheck,
+        changePassword,
+        updateProfile,
+        updateAdminCredentials,
+        uploadProfilePhoto,
+        removeProfilePhoto,
         authFetch,
         refreshRoadmap,
         refreshRoadmaps: refreshRoadmap

@@ -1,11 +1,12 @@
 import { Menu, X, User, LogOut, LayoutDashboard } from 'lucide-react';
 import GooeyNav from './GooeyNav';
 import EklavyaLogo from './EklavyaLogo';
+import Avatar from './Avatar.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Link, useNavigate } from 'react-router-dom';
 
-export default function Header({ mobileOpen, setMobileOpen, onOpenAuthModal }) {
+export default function Header({ mobileOpen, setMobileOpen }) {
   const { t, language, toggleLanguage } = useLanguage();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -47,23 +48,37 @@ export default function Header({ mobileOpen, setMobileOpen, onOpenAuthModal }) {
 
         {user ? (
           <>
-            <button className="ghost-button" onClick={() => navigate('/dashboard')}>
+            <button className="ghost-button" onClick={() => navigate(user.role === 'admin' ? '/admin' : '/dashboard')}>
               <LayoutDashboard size={16} /> {t('header.dashboard')}
             </button>
-            <div className="user-profile-badge" title={user.email}>
-              <User size={16} />
-              <span>{user.name.split(' ')[0]}</span>
-            </div>
+            {/* Phase 7: the badge opens account settings for students (parents are
+                read-only and cannot edit the shared account). */}
+            {user.role === 'student' ? (
+              <button
+                type="button"
+                className="user-profile-badge user-profile-badge-btn"
+                title={user.email}
+                onClick={() => navigate('/profile')}
+              >
+                <Avatar url={user.photoUrl} name={user.name} size={22} />
+                <span>{user.name.split(' ')[0]}</span>
+              </button>
+            ) : (
+              <div className="user-profile-badge" title={user.email}>
+                <Avatar url={user.photoUrl} name={user.name} size={22} />
+                <span>{user.name.split(' ')[0]}</span>
+              </div>
+            )}
             <button className="icon-button" onClick={logout} title={t('header.logout')} aria-label={t('header.logout')}>
               <LogOut size={18} />
             </button>
           </>
         ) : (
           <>
-            <button className="ghost-button" onClick={() => onOpenAuthModal('login')}>
+            <button className="ghost-button" onClick={() => navigate('/login')}>
               {t('header.login')}
             </button>
-            <button className="primary-button" onClick={() => onOpenAuthModal('signup')}>
+            <button className="primary-button" onClick={() => navigate('/signup')}>
               {t('header.getStarted')}
             </button>
           </>
@@ -97,15 +112,20 @@ export default function Header({ mobileOpen, setMobileOpen, onOpenAuthModal }) {
           ))}
           {user ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%', marginTop: '0.5rem' }}>
-              <button className="primary-button" onClick={() => { setMobileOpen(false); navigate('/dashboard'); }}>
+              <button className="primary-button" onClick={() => { setMobileOpen(false); navigate(user.role === 'admin' ? '/admin' : '/dashboard'); }}>
                 {t('header.dashboard')}
               </button>
+              {user.role === 'student' && (
+                <button className="ghost-button" style={{ border: '1px solid currentColor' }} onClick={() => { setMobileOpen(false); navigate('/profile'); }}>
+                  <User size={16} /> {t('auth.profileTitle')}
+                </button>
+              )}
               <button className="ghost-button" style={{ border: '1px solid currentColor' }} onClick={() => { setMobileOpen(false); logout(); }}>
                 <LogOut size={16} /> {t('header.logout')}
               </button>
             </div>
           ) : (
-            <button className="primary-button" onClick={() => { setMobileOpen(false); onOpenAuthModal('login'); }}>
+            <button className="primary-button" onClick={() => { setMobileOpen(false); navigate('/login'); }}>
               {t('header.login')}
             </button>
           )}

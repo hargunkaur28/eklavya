@@ -1,5 +1,5 @@
 import express from 'express';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, requireRole } from '../middleware/auth.js';
 import DiagnosticResult from '../models/DiagnosticResult.js';
 import DiagnosticSession from '../models/DiagnosticSession.js';
 import { translateQuestionsArray, translateTextWithSarvam } from '../utils/translateAndCache.js';
@@ -142,7 +142,7 @@ No extra text, raw JSON only.`;
 }
 
 // POST /api/diagnostic/generate
-router.post('/generate', authMiddleware, async (req, res) => {
+router.post('/generate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { grade, subject } = req.body;
     const isHindiRequested = req.query.lang === 'hi' || req.body.language === 'hi';
@@ -220,7 +220,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
 });
 
 // POST /api/diagnostic/submit
-router.post('/submit', authMiddleware, async (req, res) => {
+router.post('/submit', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { quizSessionId, grade, subject, answers } = req.body;
     if (!quizSessionId) {
@@ -319,7 +319,7 @@ router.post('/submit', authMiddleware, async (req, res) => {
 });
 
 // POST /api/diagnostic/:id/translate (Phase 10 Sarvam Translate for Review)
-router.post('/:id/translate', authMiddleware, async (req, res) => {
+router.post('/:id/translate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const result = await DiagnosticResult.findById(req.params.id);
     if (!result) {

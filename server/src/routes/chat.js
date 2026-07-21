@@ -10,7 +10,7 @@ import User from '../models/User.js';
 import Roadmap from '../models/Roadmap.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'eklavya_super_secret_jwt_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // ── Multer: memory storage for STT audio uploads, max 5MB ──
 const upload = multer({

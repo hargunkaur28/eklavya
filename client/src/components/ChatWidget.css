@@ -551,6 +551,14 @@
   }
 }
 
+/* On the dashboard, float the launcher ABOVE the mobile bottom nav (clears its
+   full height so it never sits over the nav items). */
+@media (max-width: 768px) {
+  .chat-toggle-btn.above-bottom-nav {
+    bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+}
+
 @media (max-width: 768px) and (min-width: 481px) {
   .chat-panel {
     width: calc(100vw - 32px);

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { courses } from './data/courses.js';
 import { LanguageProvider } from './context/LanguageContext.jsx';
-import { AuthProvider } from './context/AuthContext.jsx';
+import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Header from './components/Header.jsx';
 import Hero from './components/Hero.jsx';
@@ -15,48 +15,38 @@ import Footer from './components/Footer.jsx';
 import CourseDetail from './components/CourseDetail.jsx';
 import ScrollReveal from './components/ScrollReveal.jsx';
 import AIForLearning from './components/AIForLearning.jsx';
-import AuthModal from './components/AuthModal.jsx';
+import AuthPage from './pages/AuthPage.jsx';
+import ChangePasswordPage from './pages/ChangePasswordPage.jsx';
+import ProfilePage from './pages/ProfilePage.jsx';
 import Onboarding from './components/Onboarding.jsx';
 import RoadmapDashboard from './components/RoadmapDashboard.jsx';
+import ParentDashboard from './components/ParentDashboard.jsx';
+import AdminLoginPage from './pages/AdminLoginPage.jsx';
+import AdminDashboard from './components/AdminDashboard.jsx';
 import DiagnosticReview from './pages/DiagnosticReview.jsx';
 import DayDetail from './pages/DayDetail.jsx';
 import ChatWidget from './components/ChatWidget.jsx';
 
 // Home Component with landing page sections
-function Home({ initialAuthTab = null }) {
+function Home() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState(initialAuthTab);
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (initialAuthTab) {
-      setAuthModalTab(initialAuthTab);
-    }
     if (window.location.pathname === '/courses') {
       setTimeout(() => {
         document.getElementById('courses')?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
     }
-  }, [initialAuthTab]);
+  }, []);
 
   const handleSelectCourse = (courseId) => {
     navigate(`/courses/${courseId}`);
   };
 
-  const handleCloseAuthModal = () => {
-    setAuthModalTab(null);
-    if (window.location.pathname === '/login' || window.location.pathname === '/signup') {
-      navigate('/');
-    }
-  };
-
   return (
     <main>
-      <Header
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
-      />
+      <Header mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
       <Hero />
       <ScrollReveal><Stats /></ScrollReveal>
       <AIForLearning />
@@ -67,12 +57,6 @@ function Home({ initialAuthTab = null }) {
       <div className="footer-wrapper">
         <Footer />
       </div>
-
-      <AuthModal
-        isOpen={Boolean(authModalTab)}
-        onClose={handleCloseAuthModal}
-        initialTab={authModalTab || 'login'}
-      />
     </main>
   );
 }
@@ -102,103 +86,35 @@ function CourseDetailWrapper() {
   );
 }
 
-// Onboarding Page Wrapper
-function OnboardingWrapper() {
+// Shared chrome wrapper for the authenticated inner pages.
+function PageShell({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState(null);
-
   return (
     <main>
-      <Header
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
-      />
-      <Onboarding />
+      <Header mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+      {children}
       <div className="footer-wrapper">
         <Footer />
       </div>
-      <AuthModal
-        isOpen={Boolean(authModalTab)}
-        onClose={() => setAuthModalTab(null)}
-        initialTab={authModalTab || 'login'}
-      />
     </main>
   );
 }
 
-// Review Page Wrapper
-function ReviewWrapper() {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState(null);
-
-  return (
-    <main>
-      <Header
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
-      />
-      <DiagnosticReview />
-      <div className="footer-wrapper">
-        <Footer />
-      </div>
-      <AuthModal
-        isOpen={Boolean(authModalTab)}
-        onClose={() => setAuthModalTab(null)}
-        initialTab={authModalTab || 'login'}
-      />
-    </main>
-  );
+// Phase 5: /dashboard shows the read-only parent view for a parent session,
+// otherwise the interactive student dashboard. Both are server-scoped to the
+// same one student (Option B), so this is a presentation choice, not the security
+// boundary — mutations are blocked server-side regardless.
+function DashboardView() {
+  const { user } = useAuth();
+  return user?.role === 'parent' ? <ParentDashboard /> : <RoadmapDashboard />;
 }
 
-// Day Detail Page Wrapper
-function DayDetailWrapper() {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState(null);
-
+// Dedicated /login and /signup pages (replaces the former auth modal)
+function AuthPageWrapper({ initialTab }) {
   return (
-    <main>
-      <Header
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
-      />
-      <DayDetail />
-      <div className="footer-wrapper">
-        <Footer />
-      </div>
-      <AuthModal
-        isOpen={Boolean(authModalTab)}
-        onClose={() => setAuthModalTab(null)}
-        initialTab={authModalTab || 'login'}
-      />
-    </main>
-  );
-}
-
-// Dashboard Page Wrapper
-function DashboardWrapper() {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState(null);
-
-  return (
-    <main>
-      <Header
-        mobileOpen={mobileOpen}
-        setMobileOpen={setMobileOpen}
-        onOpenAuthModal={(tab) => setAuthModalTab(tab)}
-      />
-      <RoadmapDashboard />
-      <div className="footer-wrapper">
-        <Footer />
-      </div>
-      <AuthModal
-        isOpen={Boolean(authModalTab)}
-        onClose={() => setAuthModalTab(null)}
-        initialTab={authModalTab || 'login'}
-      />
-    </main>
+    <PageShell>
+      <AuthPage initialTab={initialTab} />
+    </PageShell>
   );
 }
 
@@ -223,11 +139,17 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/courses" element={<Home />} />
             <Route path="/courses/:id" element={<CourseDetailWrapper />} />
+            <Route path="/login" element={<AuthPageWrapper initialTab="login" />} />
+            <Route path="/signup" element={<AuthPageWrapper initialTab="signup" />} />
+            {/* Phase 6: admin console — isolated shell (no student header/nav).
+                AdminDashboard self-guards on role and redirects to /admin/login. */}
+            <Route path="/admin/login" element={<PageShell><AdminLoginPage /></PageShell>} />
+            <Route path="/admin" element={<PageShell><AdminDashboard /></PageShell>} />
             <Route
               path="/onboarding"
               element={
                 <ProtectedRoute>
-                  <OnboardingWrapper />
+                  <PageShell><Onboarding /></PageShell>
                 </ProtectedRoute>
               }
             />
@@ -235,7 +157,7 @@ export default function App() {
               path="/review/:id"
               element={
                 <ProtectedRoute>
-                  <ReviewWrapper />
+                  <PageShell><DiagnosticReview /></PageShell>
                 </ProtectedRoute>
               }
             />
@@ -243,7 +165,7 @@ export default function App() {
               path="/roadmap/:roadmapId/day/:dayNumber"
               element={
                 <ProtectedRoute>
-                  <DayDetailWrapper />
+                  <PageShell><DayDetail /></PageShell>
                 </ProtectedRoute>
               }
             />
@@ -251,12 +173,26 @@ export default function App() {
               path="/dashboard"
               element={
                 <ProtectedRoute>
-                  <DashboardWrapper />
+                  <PageShell><DashboardView /></PageShell>
                 </ProtectedRoute>
               }
             />
-            <Route path="/login" element={<Home initialAuthTab="login" />} />
-            <Route path="/signup" element={<Home initialAuthTab="signup" />} />
+            <Route
+              path="/change-password"
+              element={
+                <ProtectedRoute>
+                  <PageShell><ChangePasswordPage /></PageShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <PageShell><ProfilePage /></PageShell>
+                </ProtectedRoute>
+              }
+            />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

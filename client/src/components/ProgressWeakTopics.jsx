@@ -7,7 +7,7 @@ import { TrendingUp, Loader2, CheckCircle2, ArrowRight } from 'lucide-react';
 
 // Phase 4: reads the weak-topics aggregation (per-question quiz results grouped
 // by canonical sub-topic) and surfaces what the student should focus on next.
-export default function ProgressWeakTopics({ roadmapId }) {
+export default function ProgressWeakTopics({ roadmapId, readOnly = false }) {
   const { authFetch } = useAuth();
   const { language } = useLanguage();
   const navigate = useNavigate();
@@ -70,16 +70,24 @@ export default function ProgressWeakTopics({ roadmapId }) {
               </div>
               <div className="weak-item-foot">
                 <span className="weak-item-score">{typeof t.weakTopicScore === 'function' ? t.weakTopicScore(tpc.correct, tpc.total) : `${tpc.correct}/${tpc.total}`}</span>
+                {/* Phase 5: hide deep-links into the interactive day page for
+                    read-only parent views; keep the day numbers as plain labels. */}
                 <div className="weak-day-links">
                   {tpc.days.map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      className="weak-day-link"
-                      onClick={() => navigate(`/roadmap/${roadmapId}/day/${d}`)}
-                    >
-                      {typeof t.reviewDay === 'function' ? t.reviewDay(d) : `Review Day ${d}`} <ArrowRight size={13} />
-                    </button>
+                    readOnly ? (
+                      <span key={d} className="weak-day-link weak-day-link-static">
+                        {typeof t.reviewDay === 'function' ? t.reviewDay(d) : `Day ${d}`}
+                      </span>
+                    ) : (
+                      <button
+                        key={d}
+                        type="button"
+                        className="weak-day-link"
+                        onClick={() => navigate(`/roadmap/${roadmapId}/day/${d}`)}
+                      >
+                        {typeof t.reviewDay === 'function' ? t.reviewDay(d) : `Review Day ${d}`} <ArrowRight size={13} />
+                      </button>
+                    )
                   ))}
                 </div>
               </div>

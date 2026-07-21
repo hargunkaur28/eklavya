@@ -1,11 +1,12 @@
 import express from 'express';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, requireRole } from '../middleware/auth.js';
 import Roadmap from '../models/Roadmap.js';
 import DiagnosticResult from '../models/DiagnosticResult.js';
 import { fetchYoutubeResources } from '../utils/fetchYoutubeResources.js';
 import { translateTextWithSarvam, translateQuestionsArray } from '../utils/translateAndCache.js';
 import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash, getAudioUrl } from '../utils/textToSpeech.js';
 import { recordStudyActivity } from '../utils/recordActivity.js';
+import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN_QUESTIONS } from '../utils/weakTopics.js';
 
 const router = express.Router();
 
@@ -154,10 +155,8 @@ function getResourceLinkForTopic(grade, subject) {
 // marked complete even with the video watched, but the student may retake.
 const QUIZ_PASS_THRESHOLD = 0.7;
 const MODULE_QUIZ_MIN_QUESTIONS = 10;
-// Phase 4: a sub-topic is "weak" below 60% average accuracy (needs >= 2 answered
-// questions so a single miss doesn't flag it). Feeds Phase 7 remediation.
-const WEAK_TOPIC_THRESHOLD = 0.6;
-const WEAK_TOPIC_MIN_QUESTIONS = 2;
+// WEAK_TOPIC_THRESHOLD / WEAK_TOPIC_MIN_QUESTIONS / normalizeTopic now live in
+// utils/weakTopics.js (shared by student/parent/admin) and are imported above.
 // Phase 7: only insert a remediation day once the student has RETAKEN a day's
 // quiz (attemptCount >= 2) and a sub-topic is still weak — first fail never
 // churns the roadmap. Option (a): insert one day, never touch completed days.
@@ -203,32 +202,6 @@ async function ensureQuizHindi(day) {
   return changed;
 }
 
-// Localization: ensure day.subtopicsHindi mirrors day.subtopics (same order).
-// Per-item lazy retry: items whose cached "Hindi" is still just the English source
-// are re-attempted on each Hindi read (terse math terms can fail under rate limits),
-// so a failed translation is never cached as final.
-async function ensureSubtopicsHindi(day) {
-  const subs = day.subtopics || [];
-  if (subs.length === 0) return false;
-  const cur = day.subtopicsHindi || [];
-
-  let changed = false;
-  const hi = [];
-  for (let i = 0; i < subs.length; i++) {
-    const existing = cur[i];
-    if (existing && existing.trim() && existing.trim() !== subs[i].trim()) {
-      hi.push(existing); // already has a real translation
-      continue;
-    }
-    const t = await translateTextWithSarvam(subs[i]);
-    if (t && t.trim() !== subs[i].trim()) { hi.push(t); changed = true; }
-    else { hi.push(subs[i]); } // fallback to English; will retry next Hindi read
-  }
-
-  if (changed || cur.length !== subs.length) { day.subtopicsHindi = hi; return true; }
-  return false;
-}
-
 // Client-safe question view (no correctIndex/explanation), localized if Hindi.
 function serializeQuizQuestion(q, idx, isHindi) {
   const useHi = isHindi && q.hindiTranslated;
@@ -238,11 +211,6 @@ function serializeQuizQuestion(q, idx, isHindi) {
     options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
     topic: q.topic
   };
-}
-
-// Phase 4: normalize a sub-topic label so casing/whitespace drift collapses.
-function normalizeTopic(s) {
-  return (s || '').toLowerCase().trim().replace(/\s+/g, ' ').replace(/[.,;:]+$/, '');
 }
 
 // Pin each question's freeform `topic` to a canonical per-day sub-topic. Returns
@@ -453,7 +421,7 @@ function isAnyVideoWatched(day) {
 }
 
 // POST /api/roadmap/generate
-router.post('/generate', authMiddleware, async (req, res) => {
+router.post('/generate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { diagnosticResultId } = req.body;
     let diagnostic = null;
@@ -691,7 +659,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 // PATCH /api/roadmap/:id/day/:dayNumber
-router.patch('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
+router.patch('/:id/day/:dayNumber', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { id, dayNumber } = req.params;
     const { completed } = req.body;
@@ -737,7 +705,7 @@ router.patch('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
 // videoProgress array. Each of a day's videos tracks independently. Deliberately
 // does NOT touch `completed` — watching a video is a separate signal from
 // finishing the day (which also requires the Phase 3 quiz).
-router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, async (req, res) => {
+router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { id, dayNumber } = req.params;
     const { videoId, watchedSeconds, durationSeconds, localDate } = req.body;
@@ -763,7 +731,6 @@ router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, async (req, r
 
     const incomingWatched = Math.max(0, Number(watchedSeconds) || 0);
     const incomingDuration = Math.max(0, Number(durationSeconds) || 0);
-    let newlyWatched = false;
 
     // Find this video's record (or create it).
     let record = day.videoProgress.find(v => v.videoId === incomingVideoId);
@@ -784,15 +751,19 @@ router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, async (req, r
       if (!record.watched && ratio >= VIDEO_WATCH_THRESHOLD) {
         record.watched = true;
         record.watchedAt = new Date();
-        newlyWatched = true;
       }
     }
 
     roadmap.markModified('days');
     await roadmap.save();
 
-    // Phase 8: crossing the watch threshold counts as studying today.
-    if (newlyWatched) await recordStudyActivity(req.userId, localDate);
+    // Phase 8: watching to threshold IN THIS SESSION counts as studying today —
+    // including re-watching a video that was already completed on a prior day.
+    // (Uses this call's position, not the persisted max, so merely re-opening a
+    // finished video without watching doesn't count.)
+    const watchedToThresholdNow = record.durationSeconds > 0
+      && incomingWatched / record.durationSeconds >= VIDEO_WATCH_THRESHOLD;
+    if (watchedToThresholdNow) await recordStudyActivity(req.userId, localDate);
 
     res.json(serializeVideoProgress(day));
   } catch (error) {
@@ -889,7 +860,7 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
 // POST /api/roadmap/:id/day/:dayNumber/quiz/submit (Phase 3)
 // Scores an attempt against the cached answers, stores per-question detail
 // (for Phase 4), and — if passed AND a video is watched — completes the day.
-router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, async (req, res) => {
+router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { id, dayNumber } = req.params;
     const { answers, localDate } = req.body;
@@ -1135,62 +1106,11 @@ router.get('/:id/weak-topics', authMiddleware, async (req, res) => {
     }
 
     const isHindi = req.query.lang === 'hi';
-
-    // topicKey -> { label, correct, total, days:Set }
-    const agg = new Map();
-    let hasAttempts = false;
-    let mutated = false;
-    // normalized English sub-topic -> Hindi label (built lazily for Hindi mode).
-    const hiMap = new Map();
-
-    for (const day of roadmap.days) {
-      if (isHindi && (day.subtopics || []).length) {
-        if (await ensureSubtopicsHindi(day)) mutated = true;
-        (day.subtopics || []).forEach((s, i) => {
-          const hi = (day.subtopicsHindi || [])[i];
-          if (hi) hiMap.set(normalizeTopic(s), hi);
-        });
-      }
-
-      const attempt = day.moduleQuizAttempt;
-      if (!attempt?.attempted || !(attempt.questions || []).length) continue;
-      hasAttempts = true;
-
-      for (const q of attempt.questions) {
-        const key = normalizeTopic(q.topic || 'General');
-        if (!key) continue;
-        if (!agg.has(key)) {
-          agg.set(key, { label: (q.topic || 'General').trim(), correct: 0, total: 0, days: new Set() });
-        }
-        const entry = agg.get(key);
-        entry.total += 1;
-        if (q.isCorrect) entry.correct += 1;
-        entry.days.add(day.dayNumber);
-      }
-    }
-
-    if (mutated) { roadmap.markModified('days'); await roadmap.save(); }
-
-    const allTopics = Array.from(agg.entries()).map(([key, e]) => ({
-      subtopic: e.label, // English canonical (stable key)
-      label: isHindi ? (hiMap.get(key) || e.label) : e.label, // localized display
-      correct: e.correct,
-      total: e.total,
-      wrong: e.total - e.correct,
-      accuracy: e.total > 0 ? e.correct / e.total : 0,
-      days: Array.from(e.days).sort((a, b) => a - b)
-    }));
-
-    const weakTopics = allTopics
-      .filter(tpc => tpc.total >= WEAK_TOPIC_MIN_QUESTIONS && tpc.accuracy < WEAK_TOPIC_THRESHOLD)
-      .sort((a, b) => a.accuracy - b.accuracy);
-
-    res.json({
-      hasAttempts,
-      threshold: WEAK_TOPIC_THRESHOLD,
-      weakTopics,
-      allTopics: allTopics.sort((a, b) => a.accuracy - b.accuracy)
-    });
+    // Shared aggregation (utils/weakTopics.js). Parents are read-only: they never
+    // trigger the lazy Hindi translate+save — they serve whatever the student's
+    // own viewing already cached (pre-translate-on-student-side).
+    const result = await computeWeakTopics(roadmap, { isHindi, allowSave: req.role !== 'parent' });
+    res.json(result);
   } catch (error) {
     console.error('Weak topics error:', error);
     res.status(500).json({ error: 'Server error computing weak topics.' });
@@ -1198,7 +1118,7 @@ router.get('/:id/weak-topics', authMiddleware, async (req, res) => {
 });
 
 // POST /api/roadmap/:id/translate (Translates roadmap day topics & focus to Hindi)
-router.post('/:id/translate', authMiddleware, async (req, res) => {
+router.post('/:id/translate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const roadmap = await Roadmap.findOne({ _id: req.params.id, userId: req.userId });
     if (!roadmap) {

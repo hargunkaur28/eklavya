@@ -1,8 +1,9 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function ProtectedRoute({ children }) {
-  const { user, token, loading } = useAuth();
+  const { user, token, loading, mustChangePassword } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -14,6 +15,13 @@ export default function ProtectedRoute({ children }) {
 
   if (!user && !token) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Phase 4: a parent still holding the temporary password is forced to the
+  // change-password screen and cannot reach any other protected page until done.
+  // (The change-password route itself is exempt to avoid a redirect loop.)
+  if (mustChangePassword && location.pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />;
   }
 
   return children;

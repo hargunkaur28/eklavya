@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Bot, X, Send, Mic, MicOff, Volume2, VolumeX, ExternalLink, Sparkles } from 'lucide-react';
@@ -27,6 +27,10 @@ export default function ChatWidget() {
   const { language } = useLanguage();
   const { token, user, activeRoadmap } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // The dashboard shows a fixed bottom nav on mobile — float the launcher ABOVE
+  // it (scales as sections are added, since the nav keeps its full width).
+  const hasBottomNav = location.pathname.startsWith('/dashboard');
 
   // ── State ──
   const [isOpen, setIsOpen] = useState(false);
@@ -524,7 +528,7 @@ export default function ChatWidget() {
     <>
       {/* Floating Toggle Button */}
       <button
-        className="chat-toggle-btn"
+        className={`chat-toggle-btn ${hasBottomNav ? 'above-bottom-nav' : ''}`}
         onClick={handleToggle}
         aria-label={isOpen ? 'Close chat' : 'Open Eklavya Assistant'}
         id="chat-toggle"

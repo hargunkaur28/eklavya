@@ -1,5 +1,5 @@
 import express from 'express';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, requireRole } from '../middleware/auth.js';
 import PracticeSession from '../models/PracticeSession.js';
 import { translateQuestionsArray } from '../utils/translateAndCache.js';
 import { recordStudyActivity } from '../utils/recordActivity.js';
@@ -98,7 +98,7 @@ function serializePracticeQuestion(q, idx, isHindi) {
 
 // POST /api/practice/generate  { grade, subject, topic }
 // Generates a fresh practice quiz and stores it as a session for later scoring.
-router.post('/generate', authMiddleware, async (req, res) => {
+router.post('/generate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { grade, subject, topic } = req.body;
     const isHindi = req.query.lang === 'hi' || req.body.language === 'hi';
@@ -156,7 +156,7 @@ router.post('/generate', authMiddleware, async (req, res) => {
 // POST /api/practice/submit  { sessionId, answers }
 // Scores the practice attempt and returns a full review. Does NOT touch any
 // roadmap, day completion, or weak-topic aggregation.
-router.post('/submit', authMiddleware, async (req, res) => {
+router.post('/submit', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { sessionId, answers, localDate } = req.body;
     const isHindi = req.query.lang === 'hi' || req.body.language === 'hi';

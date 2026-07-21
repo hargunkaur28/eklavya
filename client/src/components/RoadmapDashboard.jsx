@@ -4,13 +4,15 @@ import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
 import { formatGradeSubject, formatGradeSubjectDash } from '../utils/subjectTranslations.js';
 import { getTranslatedTopic } from '../utils/topicTranslations.js';
-import { CheckSquare, Square, Clock, ExternalLink, RefreshCw, Trophy, CheckCircle2, XCircle, Sparkles, Play, ArrowRight } from 'lucide-react';
+import { CheckSquare, Square, Clock, ExternalLink, RefreshCw, Trophy, CheckCircle2, XCircle, Sparkles, UserCog } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import SpeakerButton from './SpeakerButton.jsx';
 import DashboardSidebar from './DashboardSidebar.jsx';
 import ProgressWeakTopics from './ProgressWeakTopics.jsx';
 import PracticeMode from './PracticeMode.jsx';
-import StreakWidget from './StreakWidget.jsx';
+import SubjectRings from './SubjectRings.jsx';
+import DashboardStatCards from './DashboardStatCards.jsx';
+import ParentAccessCard from './ParentAccessCard.jsx';
 
 export default function RoadmapDashboard() {
   const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
@@ -159,84 +161,60 @@ export default function RoadmapDashboard() {
     ? diagnosticData.translatedHindiRecommendation
     : diagnosticData?.recommendation;
 
+  const nextTopic = nextDay
+    ? ((language === 'hi' && hindiData?.[nextDayIdx]?.topic) ? hindiData[nextDayIdx].topic : nextDay.topic)
+    : null;
+
   return (
-    <div className="dashboard-shell">
+    <div className="dashboard-bg">
+      <div className="dashboard-card">
       <DashboardSidebar
         activeSection={activeSection}
         onSelect={setActiveSection}
         t={t}
-        userName={userName}
-        gradeSubject={formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}
-        subjects={(roadmaps || []).map((r) => ({
-          id: r._id,
-          label: formatGradeSubjectDash(r.grade, r.subject, language)
-        }))}
-        activeRoadmapId={activeRoadmap._id}
-        onSelectSubject={selectRoadmap}
-        onAddSubject={() => navigate('/onboarding')}
       />
       <div className="dashboard-main">
-        {/* Phase 5: mobile subject switcher (the sidebar switcher is desktop-only) */}
-        {(roadmaps || []).length > 1 && (
-          <div className="mobile-subject-bar">
-            {roadmaps.map((r) => (
-              <button
-                key={r._id}
-                type="button"
-                className={`mobile-subject-chip ${r._id === activeRoadmap._id ? 'active' : ''}`}
-                onClick={() => selectRoadmap(r._id)}
-              >
-                {formatGradeSubjectDash(r.grade, r.subject, language)}
-              </button>
-            ))}
-          </div>
-        )}
-
         <header className="dashboard-header">
           <div>
             <h3 style={{ margin: '0 0 0.35rem', fontSize: '1.45rem', fontWeight: '800', color: '#2F6B3A' }}>
               {typeof t.greeting === 'function' ? t.greeting(userName) : `Hello, ${userName}`}
+              {' '}<span className="wave-emoji" role="img" aria-label="waving hand">👋</span>
             </h3>
-            <h2>{formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}</h2>
-            <p className="dashboard-subtitle">
-              {t.tailoredScheduleSubtitle}
-            </p>
+            <p className="dashboard-welcome">{t.welcomeSubtitle}</p>
+            {/* Subject + tailored-schedule line belong to the roadmap view only —
+                they'd be out of place on Practice / Progress / Review / Settings. */}
+            {activeSection === 'roadmap' && (
+              <>
+                <h2>{formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}</h2>
+                <p className="dashboard-subtitle">
+                  {t.tailoredScheduleSubtitle}
+                </p>
+              </>
+            )}
           </div>
-          <button
-            className="ghost-button"
-            onClick={() => navigate('/onboarding')}
-            title={t.retakeTest}
-          >
-            <RefreshCw size={16} /> {t.retakeTest}
-          </button>
+          {activeSection === 'roadmap' && (
+            <button
+              className="ghost-button"
+              onClick={() => navigate('/onboarding')}
+              title={t.retakeTest}
+            >
+              <RefreshCw size={16} /> {t.retakeTest}
+            </button>
+          )}
         </header>
 
-        {/* Phase 8: account-wide study streak (shown across all sections) */}
-        <StreakWidget />
-
-        {/* ROADMAP SECTION CONTENT */}
+        {/* ROADMAP SECTION CONTENT — redesigned two-column overview */}
         {activeSection === 'roadmap' && (
           <>
-            {/* Phase 9: continue where you left off (per selected subject) */}
-            {nextDay ? (
-              <button
-                type="button"
-                className="continue-card"
-                onClick={() => navigate(`/roadmap/${activeRoadmap._id}/day/${nextDay.dayNumber}`)}
-              >
-                <div className="continue-info">
-                  <span className="continue-heading"><Play size={14} /> {t.continueHeading}</span>
-                  <span className="continue-day">
-                    {typeof t.day === 'function' ? t.day(nextDay.dayNumber) : `Day ${nextDay.dayNumber}`} — {(language === 'hi' && hindiData?.[nextDayIdx]?.topic) ? hindiData[nextDayIdx].topic : nextDay.topic}
-                  </span>
-                </div>
-                <span className="continue-cta">{t.continueCta} <ArrowRight size={16} /></span>
-              </button>
-            ) : (
-              <div className="all-done-card"><Trophy size={18} /> {t.allDaysComplete}</div>
-            )}
-
-            {/* Progress Banner */}
+          <div className="overview-grid">
+            <div className="overview-left">
+              {/* Subject rings — one per active roadmap; click to switch subject */}
+              <SubjectRings
+                roadmaps={roadmaps}
+                activeRoadmapId={activeRoadmap._id}
+                onSelect={selectRoadmap}
+              />
+            {/* Progress Banner (selected subject detail) */}
             <div className="dashboard-progress-card">
               <div className="progress-info-row">
                 <div>
@@ -340,7 +318,34 @@ export default function RoadmapDashboard() {
                 );
               })}
             </div>
+            </div>{/* /overview-left */}
+
+            <DashboardStatCards
+              userName={userName}
+              subjectLabel={formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}
+              nextDay={nextDay ? { dayNumber: nextDay.dayNumber, topic: nextTopic } : null}
+              onContinue={() => nextDay && navigate(`/roadmap/${activeRoadmap._id}/day/${nextDay.dayNumber}`)}
+            />
+          </div>
           </>
+        )}
+
+        {/* SETTINGS — Phase 7: account settings (edit profile + parent login) */}
+        {activeSection === 'settings' && (
+          <div className="settings-section">
+            <h2 className="settings-heading">{t.settingsHeading}</h2>
+            <button type="button" className="settings-row" onClick={() => navigate('/profile')}>
+              <span className="settings-row-icon"><UserCog size={20} /></span>
+              <span className="settings-row-text">
+                <span className="settings-row-title">{t.editProfile}</span>
+                <span className="settings-row-sub">{t.editProfileSub}</span>
+              </span>
+              <ExternalLink size={16} className="settings-row-arrow" />
+            </button>
+
+            <h3 className="settings-subheading">{t.parentLoginHeading}</h3>
+            <ParentAccessCard />
+          </div>
         )}
 
         {/* PRACTICE MODE — Phase 6 */}
@@ -476,6 +481,7 @@ export default function RoadmapDashboard() {
           </div>
         )}
       </div>
+      </div>{/* /dashboard-card */}
     </div>
   );
 }

@@ -1,7 +1,11 @@
+// Phase 4: load .env BEFORE any other module so route/middleware files that read
+// process.env at import time (e.g. JWT_SECRET) see the configured values. This
+// side-effect import must stay the first import in the file.
+import 'dotenv/config';
+
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import authRoutes from './routes/auth.js';
@@ -10,9 +14,26 @@ import roadmapRoutes from './routes/roadmap.js';
 import practiceRoutes from './routes/practice.js';
 import activityRoutes from './routes/activity.js';
 import chatRoutes from './routes/chat.js';
+import adminRoutes from './routes/admin.js';
+import { parentPasswordChangeGate } from './middleware/auth.js';
 import { startTempAudioCleanup, stopTempAudioCleanup } from './utils/textToSpeech.js';
 
-dotenv.config();
+// Phase 4: no hardcoded secret fallback anywhere. Refuse to start without a
+// configured JWT secret rather than silently signing tokens with a known value.
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET is not set. Set it in the environment (.env) before starting.');
+  process.exit(1);
+}
+
+// Phase 6: the admin panel is enabled by setting ADMIN_EMAIL. If it's set, the
+// other two credentials MUST also be present — refuse to boot on a half-configured
+// admin. If ADMIN_EMAIL is unset, the admin surface stays disabled (routes 404).
+if (process.env.ADMIN_EMAIL) {
+  if (!process.env.ADMIN_PASSWORD || !process.env.ADMIN_SECURITY_CODE) {
+    console.error('FATAL: ADMIN_EMAIL is set but ADMIN_PASSWORD and/or ADMIN_SECURITY_CODE are missing. Set all three (or none) in the environment.');
+    process.exit(1);
+  }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,11 +66,15 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/diagnostic', diagnosticRoutes);
-app.use('/api/roadmap', roadmapRoutes);
-app.use('/api/practice', practiceRoutes);
-app.use('/api/activity', activityRoutes);
+// Phase 4: the parent-must-change-password gate runs ahead of every data router
+// (but not /api/auth, so change-password itself stays reachable, nor /api/chat).
+app.use('/api/diagnostic', parentPasswordChangeGate, diagnosticRoutes);
+app.use('/api/roadmap', parentPasswordChangeGate, roadmapRoutes);
+app.use('/api/practice', parentPasswordChangeGate, practiceRoutes);
+app.use('/api/activity', parentPasswordChangeGate, activityRoutes);
 app.use('/api/chat', chatRoutes);
+// Phase 6: admin panel (read-only). No parent gate — admin is never a parent.
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -86,6 +111,7 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('Successfully connected to MongoDB.');
+    console.log(`Admin panel: ${process.env.ADMIN_EMAIL ? 'ENABLED' : 'disabled'}`);
     serverInstance = app.listen(PORT, () => {
       console.log(`Project Eklavya Server running on port ${PORT}`);
     });
