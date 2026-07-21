@@ -1,16 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
-import { ArrowLeft, CheckSquare, Square, Clock, Youtube, FileText, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Square, Clock, Youtube, FileText, ExternalLink, Loader2, CheckCircle2, Play } from 'lucide-react';
 import SpeakerButton from '../components/SpeakerButton.jsx';
+import YouTubePlayer from '../components/YouTubePlayer.jsx';
+import ModuleQuiz from '../components/ModuleQuiz.jsx';
 
-function getYouTubeEmbedUrl(url) {
+function getYouTubeVideoId(url) {
   if (!url) return null;
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
   const match = url.match(regExp);
-  return (match && match[2].length === 11) ? `https://www.youtube.com/embed/${match[2]}` : null;
+  return (match && match[2].length === 11) ? match[2] : null;
 }
 
 export default function DayDetail() {
@@ -26,6 +28,30 @@ export default function DayDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toggling, setToggling] = useState(false);
+  const [gateMessage, setGateMessage] = useState('');
+  // Phase 2 (revised): per-video watch state, keyed by videoId.
+  const [videoProgress, setVideoProgress] = useState({});
+  const [videoThreshold, setVideoThreshold] = useState(0.9);
+  // Click-to-play: which video cards have had their real YT.Player mounted.
+  const [activePlayers, setActivePlayers] = useState({});
+
+  // Merge server state into local, taking the max watched-seconds so a delayed
+  // server response (last saved ~10s ago) never yanks a live bar backwards.
+  // Preserves any local-only optimistic entries not yet in the server array.
+  const applyProgressArray = useCallback((arr) => {
+    setVideoProgress((prev) => {
+      const next = { ...prev };
+      (arr || []).forEach((v) => {
+        const local = prev[v.videoId] || {};
+        next[v.videoId] = {
+          watchedSeconds: Math.max(local.watchedSeconds || 0, v.watchedSeconds || 0),
+          durationSeconds: v.durationSeconds || local.durationSeconds || 0,
+          watched: Boolean(v.watched) || Boolean(local.watched)
+        };
+      });
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -34,15 +60,62 @@ export default function DayDetail() {
         if (!res.ok) throw new Error(t.couldNotLoad);
         return res.json();
       })
-      .then((data) => setDayData(data))
+      .then((data) => {
+        setDayData(data);
+        setVideoThreshold(data.videoThreshold || 0.9);
+        applyProgressArray(data.videoProgress);
+      })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [roadmapId, dayNumber, language, authFetch, t.couldNotLoad]);
+  }, [roadmapId, dayNumber, language, authFetch, t.couldNotLoad, applyProgressArray]);
+
+  // Throttle network saves per video (the bar updates every 1s locally, but we
+  // only PATCH ~every 10s, plus always on pause/end via the `final` flag).
+  const lastSaveRef = useRef({});
+  const SAVE_INTERVAL_MS = 10000;
+
+  // Phase 2: `final` = pause/end (always persist). Ticks update the bar smoothly
+  // on screen every second but only hit the server on the throttle interval.
+  const handleVideoProgress = useCallback(async ({ videoId, watchedSeconds, durationSeconds, final }) => {
+    // 1) Always update the on-screen bar immediately (cheap, smooth).
+    setVideoProgress((prev) => {
+      const rec = prev[videoId] || {};
+      const duration = durationSeconds || rec.durationSeconds || 0;
+      const watchedMax = Math.max(rec.watchedSeconds || 0, watchedSeconds || 0);
+      const watched = (rec.watched || false) || (duration > 0 && watchedMax / duration >= videoThreshold);
+      return { ...prev, [videoId]: { watchedSeconds: watchedMax, durationSeconds: duration, watched } };
+    });
+
+    // 2) Persist to the server only on `final` or when the throttle window elapsed.
+    const now = Date.now();
+    const last = lastSaveRef.current[videoId] || 0;
+    if (!final && now - last < SAVE_INTERVAL_MS) return;
+    lastSaveRef.current[videoId] = now;
+
+    try {
+      const res = await authFetch(`/roadmap/${roadmapId}/day/${dayNumber}/video-progress`, {
+        method: 'PATCH',
+        body: JSON.stringify({ videoId, watchedSeconds, durationSeconds })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.videoProgress)) applyProgressArray(data.videoProgress);
+      }
+    } catch (err) {
+      console.warn('Failed to save video progress:', err);
+    }
+  }, [authFetch, roadmapId, dayNumber, videoThreshold, applyProgressArray]);
+
+  const activatePlayer = useCallback((videoId) => {
+    setActivePlayers((prev) => ({ ...prev, [videoId]: true }));
+  }, []);
 
   const handleToggleCompletion = async () => {
     if (!dayData) return;
     setToggling(true);
+    setGateMessage('');
     const nextState = !dayData.completed;
+    // Optimistic; roll back if the server rejects (Phase 3 completion gate).
     setDayData((prev) => ({ ...prev, completed: nextState }));
 
     try {
@@ -52,13 +125,28 @@ export default function DayDetail() {
       });
       if (res.ok) {
         await refreshRoadmap();
+      } else if (res.status === 409) {
+        // Gate not satisfied — revert and explain.
+        setDayData((prev) => ({ ...prev, completed: !nextState }));
+        const data = await res.json().catch(() => ({}));
+        setGateMessage(data.message || t.completionGate);
+      } else {
+        setDayData((prev) => ({ ...prev, completed: !nextState }));
       }
     } catch (err) {
       console.warn('Failed to update completion:', err);
+      setDayData((prev) => ({ ...prev, completed: !nextState }));
     } finally {
       setToggling(false);
     }
   };
+
+  // Called when the quiz completes the day — reflect it locally + refresh.
+  const handleDayCompleted = useCallback(() => {
+    setDayData((prev) => (prev ? { ...prev, completed: true } : prev));
+    setGateMessage('');
+    refreshRoadmap();
+  }, [refreshRoadmap]);
 
   if (loading) {
     return (
@@ -106,6 +194,10 @@ export default function DayDetail() {
           </button>
         </div>
 
+        {gateMessage && (
+          <div className="completion-gate-notice">{gateMessage}</div>
+        )}
+
         {/* Day Header */}
         <header className="day-detail-header">
           <div className="day-detail-meta">
@@ -138,18 +230,43 @@ export default function DayDetail() {
           {dayData.resources && dayData.resources.length > 0 ? (
             <div className="resources-grid">
               {dayData.resources.map((res, rIdx) => {
-                const embedUrl = getYouTubeEmbedUrl(res.url);
+                const videoId = res.type === 'youtube' ? getYouTubeVideoId(res.url) : null;
 
-                if (res.type === 'youtube' && embedUrl) {
+                // Every YouTube video → its own tracked player + watch UI.
+                // Lazy: a lightweight thumbnail facade shows first; the real
+                // YT.Player only mounts once the student clicks to play.
+                if (videoId) {
+                  const rec = videoProgress[videoId];
+                  const watched = Boolean(rec?.watched);
+                  const pct = (rec && rec.durationSeconds > 0)
+                    ? Math.min(100, Math.round((rec.watchedSeconds / rec.durationSeconds) * 100))
+                    : 0;
+                  const isActive = Boolean(activePlayers[videoId]);
+
                   return (
                     <div key={rIdx} className="resource-card video-card">
                       <div className="video-embed-wrapper">
-                        <iframe
-                          src={embedUrl}
-                          title={res.title}
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowFullScreen
-                        ></iframe>
+                        {isActive ? (
+                          <YouTubePlayer
+                            videoId={videoId}
+                            autoplay
+                            onProgress={handleVideoProgress}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className="video-facade"
+                            onClick={() => activatePlayer(videoId)}
+                            aria-label={`${t.videoGuide}: ${res.title}`}
+                          >
+                            <img
+                              src={`https://img.youtube.com/vi/${videoId}/hqdefault.jpg`}
+                              alt=""
+                              loading="lazy"
+                            />
+                            <span className="video-facade-play"><Play size={26} fill="currentColor" /></span>
+                          </button>
+                        )}
                       </div>
                       <div className="resource-card-info">
                         <div className="res-badge">
@@ -157,6 +274,26 @@ export default function DayDetail() {
                         </div>
                         <h4>{res.title}</h4>
                         <span className="channel-name">{res.channel}</span>
+
+                        <div className="video-watch-status">
+                          {watched ? (
+                            <span className="video-watched-pill">
+                              <CheckCircle2 size={15} /> {t.videoWatched}
+                            </span>
+                          ) : (
+                            <span className="video-watch-label">
+                              {typeof t.videoWatchProgress === 'function'
+                                ? t.videoWatchProgress(pct)
+                                : `Watched ${pct}%`}
+                            </span>
+                          )}
+                          <div className="video-progress-bar">
+                            <div
+                              className={`video-progress-fill ${watched ? 'complete' : ''}`}
+                              style={{ width: `${watched ? 100 : pct}%` }}
+                            ></div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
@@ -189,6 +326,13 @@ export default function DayDetail() {
             </div>
           )}
         </section>
+
+        {/* Phase 3: module quiz — gates day completion */}
+        <ModuleQuiz
+          roadmapId={roadmapId}
+          dayNumber={dayNumber}
+          onDayCompleted={handleDayCompleted}
+        />
       </div>
     </div>
   );

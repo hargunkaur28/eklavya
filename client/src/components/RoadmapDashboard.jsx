@@ -4,19 +4,25 @@ import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
 import { formatGradeSubject, formatGradeSubjectDash } from '../utils/subjectTranslations.js';
 import { getTranslatedTopic } from '../utils/topicTranslations.js';
-import { CheckSquare, Square, Clock, ExternalLink, RefreshCw, Trophy, BookOpen, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
+import { CheckSquare, Square, Clock, ExternalLink, RefreshCw, Trophy, BookOpen, CheckCircle2, XCircle, Sparkles, Dumbbell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import SpeakerButton from './SpeakerButton.jsx';
+import DashboardSidebar from './DashboardSidebar.jsx';
+import ProgressWeakTopics from './ProgressWeakTopics.jsx';
 
 export default function RoadmapDashboard() {
-  const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user } = useAuth();
+  const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
   const { language } = useLanguage();
   const navigate = useNavigate();
 
   const t = translations[language]?.dashboard || translations.en.dashboard;
   const userName = user?.name || (language === 'hi' ? 'छात्र' : 'Student');
 
-  const [activeTab, setActiveTab] = useState('roadmap'); // 'roadmap' or 'review'
+  // Phase 1: sidebar-driven section state (replaces the old 2-tab toggle).
+  // 'roadmap' | 'practice' | 'progress' | 'review'. Practice/Progress are
+  // placeholder panels until Phases 6/4 fill them in.
+  const [activeSection, setActiveSection] = useState('roadmap');
+  const [gateNotice, setGateNotice] = useState('');
   const [localDays, setLocalDays] = useState(activeRoadmap?.days || []);
   const [translating, setTranslating] = useState(false);
   const [hindiData, setHindiData] = useState(activeRoadmap?.translatedHindiDays || []);
@@ -100,11 +106,25 @@ export default function RoadmapDashboard() {
 
   const completedCount = localDays.filter((d) => d.completed).length;
   const progressPercent = Math.round((completedCount / activeRoadmap.totalDays) * 100);
+  // Phase 2: video completion is a distinct signal from days completed. OR logic —
+  // a day counts if ANY of its videos is watched. Falls back to the legacy scalar
+  // `videoWatched` so days not yet migrated still register.
+  const videosWatchedCount = localDays.filter(
+    (d) => (Array.isArray(d?.videoProgress) && d.videoProgress.some((v) => v?.watched)) || d?.videoWatched
+  ).length;
+  const videoPercent = activeRoadmap.totalDays > 0
+    ? Math.round((videosWatchedCount / activeRoadmap.totalDays) * 100)
+    : 0;
 
   const toggleDayCompletion = async (dayNumber, currentCompleted) => {
     const nextState = !currentCompleted;
+    setGateNotice('');
     setLocalDays((prev) =>
       prev.map((d) => (d.dayNumber === dayNumber ? { ...d, completed: nextState } : d))
+    );
+
+    const revert = () => setLocalDays((prev) =>
+      prev.map((d) => (d.dayNumber === dayNumber ? { ...d, completed: currentCompleted } : d))
     );
 
     try {
@@ -115,9 +135,17 @@ export default function RoadmapDashboard() {
       if (res.ok) {
         const data = await res.json();
         setActiveRoadmap(data.roadmap);
+      } else if (res.status === 409) {
+        // Phase 3 completion gate — revert and tell the student what's needed.
+        revert();
+        const data = await res.json().catch(() => ({}));
+        setGateNotice(data.message || t.completionGate || 'Complete the day’s quiz to mark it done.');
+      } else {
+        revert();
       }
     } catch (err) {
       console.warn('Failed to update day completion:', err);
+      revert();
     }
   };
 
@@ -126,8 +154,38 @@ export default function RoadmapDashboard() {
     : diagnosticData?.recommendation;
 
   return (
-    <div className="dashboard-page">
-      <div className="dashboard-container">
+    <div className="dashboard-shell">
+      <DashboardSidebar
+        activeSection={activeSection}
+        onSelect={setActiveSection}
+        t={t}
+        userName={userName}
+        gradeSubject={formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}
+        subjects={(roadmaps || []).map((r) => ({
+          id: r._id,
+          label: formatGradeSubjectDash(r.grade, r.subject, language)
+        }))}
+        activeRoadmapId={activeRoadmap._id}
+        onSelectSubject={selectRoadmap}
+        onAddSubject={() => navigate('/onboarding')}
+      />
+      <div className="dashboard-main">
+        {/* Phase 5: mobile subject switcher (the sidebar switcher is desktop-only) */}
+        {(roadmaps || []).length > 1 && (
+          <div className="mobile-subject-bar">
+            {roadmaps.map((r) => (
+              <button
+                key={r._id}
+                type="button"
+                className={`mobile-subject-chip ${r._id === activeRoadmap._id ? 'active' : ''}`}
+                onClick={() => selectRoadmap(r._id)}
+              >
+                {formatGradeSubjectDash(r.grade, r.subject, language)}
+              </button>
+            ))}
+          </div>
+        )}
+
         <header className="dashboard-header">
           <div>
             <h3 style={{ margin: '0 0 0.35rem', fontSize: '1.45rem', fontWeight: '800', color: '#2F6B3A' }}>
@@ -147,24 +205,8 @@ export default function RoadmapDashboard() {
           </button>
         </header>
 
-        {/* Tab Toggle Navigation Bar */}
-        <div className="dashboard-tabs-bar">
-          <button
-            className={`dash-tab-btn ${activeTab === 'roadmap' ? 'active' : ''}`}
-            onClick={() => setActiveTab('roadmap')}
-          >
-            <BookOpen size={16} /> {t.studyRoadmap}
-          </button>
-          <button
-            className={`dash-tab-btn ${activeTab === 'review' ? 'active' : ''}`}
-            onClick={() => setActiveTab('review')}
-          >
-            <Trophy size={16} /> {t.diagnosticReview}
-          </button>
-        </div>
-
-        {/* ROADMAP TAB CONTENT */}
-        {activeTab === 'roadmap' && (
+        {/* ROADMAP SECTION CONTENT */}
+        {activeSection === 'roadmap' && (
           <>
             {/* Progress Banner */}
             <div className="dashboard-progress-card">
@@ -181,7 +223,21 @@ export default function RoadmapDashboard() {
                   style={{ width: `${progressPercent}%`, transition: 'width 0.4s ease' }}
                 ></div>
               </div>
+
+              {/* Phase 2: secondary video-completion stat (separate from days completed) */}
+              <div className="progress-secondary-row">
+                <span className="progress-secondary-label">
+                  {typeof t.videosWatchedStat === 'function'
+                    ? t.videosWatchedStat(videosWatchedCount, activeRoadmap.totalDays)
+                    : `${videosWatchedCount} of ${activeRoadmap.totalDays} videos watched`}
+                </span>
+                <span className="progress-secondary-value">{videoPercent}%</span>
+              </div>
             </div>
+
+            {gateNotice && (
+              <div className="completion-gate-notice">{gateNotice}</div>
+            )}
 
             {translating && (
               <div className="translation-notice">
@@ -250,8 +306,26 @@ export default function RoadmapDashboard() {
           </>
         )}
 
-        {/* DIAGNOSTIC REVIEW TAB CONTENT */}
-        {activeTab === 'review' && (
+        {/* PRACTICE MODE — placeholder shell (built in Phase 6) */}
+        {activeSection === 'practice' && (
+          <div className="dashboard-placeholder-panel">
+            <Dumbbell size={40} className="placeholder-icon" />
+            <h3>{t.practiceMode}</h3>
+            <span className="placeholder-badge">{t.comingSoonTitle}</span>
+            <p>{t.practiceComingSubtitle}</p>
+            <button type="button" className="placeholder-cta" onClick={() => setActiveSection('roadmap')}>
+              <BookOpen size={16} /> {t.backToRoadmapCta}
+            </button>
+          </div>
+        )}
+
+        {/* PROGRESS / WEAK TOPICS — Phase 4 */}
+        {activeSection === 'progress' && (
+          <ProgressWeakTopics roadmapId={activeRoadmap._id} />
+        )}
+
+        {/* DIAGNOSTIC REVIEW SECTION CONTENT */}
+        {activeSection === 'review' && (
           <div className="dashboard-review-tab">
             {diagnosticData && typeof diagnosticData === 'object' ? (
               <>

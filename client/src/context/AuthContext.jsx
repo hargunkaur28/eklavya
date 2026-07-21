@@ -53,11 +53,41 @@ const removeStoredToken = () => {
   }
 };
 
+const SELECTED_ROADMAP_KEY = 'eklavya_selected_roadmap';
+const getStoredSelectedRoadmap = () => {
+  try { return localStorage.getItem(SELECTED_ROADMAP_KEY) || null; } catch { return null; }
+};
+const storeSelectedRoadmap = (id) => {
+  try { if (id) localStorage.setItem(SELECTED_ROADMAP_KEY, id); } catch { /* ignore */ }
+};
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => getStoredToken());
   const [user, setUser] = useState(null);
-  const [activeRoadmap, setActiveRoadmap] = useState(null);
+  const [activeRoadmap, setActiveRoadmapState] = useState(null);
+  const [roadmaps, setRoadmaps] = useState([]); // Phase 5: all active roadmaps
   const [loading, setLoading] = useState(true);
+
+  // Keep the selected roadmap and the roadmaps list in sync when a component
+  // updates the active roadmap (e.g. after toggling a day complete).
+  const setActiveRoadmap = useCallback((next) => {
+    setActiveRoadmapState((prev) => {
+      const resolved = typeof next === 'function' ? next(prev) : next;
+      if (resolved?._id) {
+        setRoadmaps((list) => list.map((r) => (r._id === resolved._id ? resolved : r)));
+      }
+      return resolved;
+    });
+  }, []);
+
+  // Phase 5: pick which subject's roadmap is shown (persisted across sessions).
+  const selectRoadmap = useCallback((id) => {
+    setRoadmaps((list) => {
+      const found = list.find((r) => r._id === id);
+      if (found) { setActiveRoadmapState(found); storeSelectedRoadmap(id); }
+      return list;
+    });
+  }, []);
 
   // Helper fetch with auth token
   const authFetch = useCallback(async (endpoint, options = {}) => {
@@ -77,16 +107,23 @@ export function AuthProvider({ children }) {
     return res;
   }, []);
 
+  // Phase 5: load ALL active roadmaps, then select which one is shown — the
+  // previously-selected subject if it still exists, otherwise the newest.
   const refreshRoadmap = useCallback(async () => {
     try {
-      const res = await authFetch('/roadmap/mine');
+      const res = await authFetch('/roadmap/list');
       if (res.ok) {
         const data = await res.json();
-        setActiveRoadmap(data.roadmap || null);
-        return data.roadmap;
+        const list = data.roadmaps || [];
+        setRoadmaps(list);
+        const preferredId = getStoredSelectedRoadmap();
+        const chosen = list.find((r) => r._id === preferredId) || list[0] || null;
+        setActiveRoadmapState(chosen);
+        if (chosen?._id) storeSelectedRoadmap(chosen._id);
+        return chosen;
       }
     } catch (err) {
-      console.warn('Failed to fetch active roadmap:', err.message);
+      console.warn('Failed to fetch roadmaps:', err.message);
     }
     return null;
   }, [authFetch]);
@@ -95,7 +132,8 @@ export function AuthProvider({ children }) {
     const storedToken = getStoredToken();
     if (!storedToken) {
       setUser(null);
-      setActiveRoadmap(null);
+      setActiveRoadmapState(null);
+      setRoadmaps([]);
       setLoading(false);
       return;
     }
@@ -111,7 +149,8 @@ export function AuthProvider({ children }) {
         removeStoredToken();
         setToken(null);
         setUser(null);
-        setActiveRoadmap(null);
+        setActiveRoadmapState(null);
+        setRoadmaps([]);
       }
     } catch (err) {
       console.warn('Auth check error (backend offline demo mode):', err.message);
@@ -142,19 +181,9 @@ export function AuthProvider({ children }) {
 
     let roadmap = null;
     try {
-      const rmRes = await fetch(`${API_BASE}/roadmap/mine`, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${data.token}`
-        }
-      });
-      if (rmRes.ok) {
-        const rmData = await rmRes.json();
-        roadmap = rmData.roadmap || null;
-        setActiveRoadmap(roadmap);
-      }
+      roadmap = await refreshRoadmap(); // Phase 5: loads the full active-roadmap list
     } catch (err) {
-      console.warn('Failed to fetch active roadmap on login:', err.message);
+      console.warn('Failed to fetch roadmaps on login:', err.message);
     }
 
     return { user: data.user, roadmap };
@@ -175,15 +204,18 @@ export function AuthProvider({ children }) {
     storeToken(data.token, rememberMe);
     setToken(data.token);
     setUser(data.user);
-    setActiveRoadmap(null);
+    setActiveRoadmapState(null);
+    setRoadmaps([]);
     return { user: data.user, roadmap: null };
   };
 
   const logout = () => {
     removeStoredToken();
+    try { localStorage.removeItem(SELECTED_ROADMAP_KEY); } catch { /* ignore */ }
     setToken(null);
     setUser(null);
-    setActiveRoadmap(null);
+    setActiveRoadmapState(null);
+    setRoadmaps([]);
   };
 
   return (
@@ -193,12 +225,15 @@ export function AuthProvider({ children }) {
         user,
         activeRoadmap,
         setActiveRoadmap,
+        roadmaps,
+        selectRoadmap,
         loading,
         login,
         signup,
         logout,
         authFetch,
-        refreshRoadmap
+        refreshRoadmap,
+        refreshRoadmaps: refreshRoadmap
       }}
     >
       {children}
