@@ -7,6 +7,7 @@ import { ArrowLeft, CheckSquare, Square, Clock, Youtube, FileText, ExternalLink,
 import SpeakerButton from '../components/SpeakerButton.jsx';
 import YouTubePlayer from '../components/YouTubePlayer.jsx';
 import ModuleQuiz from '../components/ModuleQuiz.jsx';
+import { getLocalDate } from '../utils/streak.js';
 
 function getYouTubeVideoId(url) {
   if (!url) return null;
@@ -95,7 +96,7 @@ export default function DayDetail() {
     try {
       const res = await authFetch(`/roadmap/${roadmapId}/day/${dayNumber}/video-progress`, {
         method: 'PATCH',
-        body: JSON.stringify({ videoId, watchedSeconds, durationSeconds })
+        body: JSON.stringify({ videoId, watchedSeconds, durationSeconds, localDate: getLocalDate() })
       });
       if (res.ok) {
         const data = await res.json();
@@ -332,6 +333,7 @@ export default function DayDetail() {
           roadmapId={roadmapId}
           dayNumber={dayNumber}
           onDayCompleted={handleDayCompleted}
+          onRoadmapChanged={refreshRoadmap}
         />
       </div>
     </div>

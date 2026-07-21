@@ -5,6 +5,7 @@ import DiagnosticResult from '../models/DiagnosticResult.js';
 import { fetchYoutubeResources } from '../utils/fetchYoutubeResources.js';
 import { translateTextWithSarvam, translateQuestionsArray } from '../utils/translateAndCache.js';
 import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash, getAudioUrl } from '../utils/textToSpeech.js';
+import { recordStudyActivity } from '../utils/recordActivity.js';
 
 const router = express.Router();
 
@@ -157,6 +158,10 @@ const MODULE_QUIZ_MIN_QUESTIONS = 10;
 // questions so a single miss doesn't flag it). Feeds Phase 7 remediation.
 const WEAK_TOPIC_THRESHOLD = 0.6;
 const WEAK_TOPIC_MIN_QUESTIONS = 2;
+// Phase 7: only insert a remediation day once the student has RETAKEN a day's
+// quiz (attemptCount >= 2) and a sub-topic is still weak — first fail never
+// churns the roadmap. Option (a): insert one day, never touch completed days.
+const REMEDIATION_MIN_ATTEMPTS = 2;
 
 function validateModuleQuizJSON(data) {
   if (!data || typeof data !== 'object' || !Array.isArray(data.questions)) return false;
@@ -271,6 +276,114 @@ function canonicalizeSubtopics(rawSubtopics, questions) {
   });
 
   return { subtopics, questions: mapped };
+}
+
+// Phase 7: generate a SINGLE remediation day via a real Groq call, grounded in
+// the student's specific weak sub-topic (no template filler). Returns
+// { topic, focus, estimatedMinutes } or null if generation fails (in which case
+// we insert NOTHING rather than a placeholder day).
+async function callGroqForRemediationDay(grade, subject, weakSubtopic, sourceDayTopic) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey === 'gsk_demo_key') return null;
+
+  const prompt = `A student in ${grade} studying ${subject} is struggling specifically with "${weakSubtopic}" (from the lesson "${sourceDayTopic}"). Design ONE focused remediation study day that re-teaches and reinforces exactly this weak sub-topic.
+
+Return ONLY valid JSON in this shape:
+{
+  "topic": "Short, specific title for the remediation day about ${weakSubtopic}",
+  "focus": "1-2 sentence description of what to review and practise to fix this weakness.",
+  "estimatedMinutes": 30
+}
+No markdown, raw JSON only.`;
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      })
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+    if (!parsed.topic || !parsed.focus) return null;
+    return {
+      topic: String(parsed.topic),
+      focus: String(parsed.focus),
+      estimatedMinutes: Number(parsed.estimatedMinutes) || 30
+    };
+  } catch (err) {
+    console.warn('Remediation day generation failed:', err.message);
+    return null;
+  }
+}
+
+// Phase 7 trigger. After a module quiz submit for `day`, insert ONE remediation
+// day iff: the student has retaken this day's quiz (attemptCount >= 2), a
+// sub-topic on it is still weak (<60%, >=2 Qs), and no remediation day already
+// exists for that sub-topic. Completed days are NEVER modified — the new day is
+// spliced in after `day` and only LATER days are renumbered. Returns the
+// inserted-day summary or null.
+async function maybeInsertRemediationDay(roadmap, day) {
+  const attempt = day.moduleQuizAttempt;
+  if (!attempt || !attempt.attempted || (attempt.attemptCount || 0) < REMEDIATION_MIN_ATTEMPTS) return null;
+
+  // Aggregate THIS attempt's questions by (day-anchored) sub-topic.
+  const agg = {};
+  for (const q of attempt.questions || []) {
+    const key = q.topic || 'General';
+    if (!agg[key]) agg[key] = { correct: 0, total: 0 };
+    agg[key].total += 1;
+    if (q.isCorrect) agg[key].correct += 1;
+  }
+
+  // Pick the weakest eligible sub-topic.
+  let weakest = null;
+  for (const [sub, s] of Object.entries(agg)) {
+    const acc = s.total > 0 ? s.correct / s.total : 1;
+    if (s.total >= WEAK_TOPIC_MIN_QUESTIONS && acc < WEAK_TOPIC_THRESHOLD) {
+      if (!weakest || acc < weakest.acc) weakest = { sub, acc };
+    }
+  }
+  if (!weakest) return null;
+
+  // Anti-duplicate: never insert a second remediation day for the same sub-topic.
+  if (roadmap.days.some(d => d.isRemediation && d.remediationForSubtopic === weakest.sub)) return null;
+
+  // Real Groq generation — if it fails, insert nothing (no template filler).
+  const gen = await callGroqForRemediationDay(roadmap.grade, roadmap.subject, weakest.sub, day.topic);
+  if (!gen) return null;
+
+  const D = day.dayNumber;
+  const insertAt = roadmap.days.findIndex(d => d.dayNumber === D) + 1;
+
+  // Shift ONLY later days' numbers in place; earlier/completed day subdocs are
+  // never touched (so they stay byte-identical), then splice the new day in.
+  for (const d of roadmap.days) { if (d.dayNumber > D) d.dayNumber += 1; }
+
+  const newDay = {
+    dayNumber: D + 1,
+    topic: gen.topic,
+    focus: gen.focus,
+    resourceLink: null,
+    estimatedMinutes: gen.estimatedMinutes,
+    completed: false,
+    content: '',
+    resources: [],
+    contentGenerated: false,
+    isRemediation: true,
+    remediationForSubtopic: weakest.sub,
+    remediationFromDay: D
+  };
+  roadmap.days.splice(insertAt, 0, newDay);
+  roadmap.totalDays = roadmap.days.length;
+  roadmap.markModified('days');
+
+  return { dayNumber: newDay.dayNumber, topic: newDay.topic, subtopic: weakest.sub };
 }
 
 // Generates a quiz grounded ONLY in this specific day's topic/focus/content.
@@ -627,7 +740,7 @@ router.patch('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
 router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, async (req, res) => {
   try {
     const { id, dayNumber } = req.params;
-    const { videoId, watchedSeconds, durationSeconds } = req.body;
+    const { videoId, watchedSeconds, durationSeconds, localDate } = req.body;
 
     const incomingVideoId = typeof videoId === 'string' ? videoId.trim() : '';
     if (!incomingVideoId) {
@@ -650,6 +763,7 @@ router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, async (req, r
 
     const incomingWatched = Math.max(0, Number(watchedSeconds) || 0);
     const incomingDuration = Math.max(0, Number(durationSeconds) || 0);
+    let newlyWatched = false;
 
     // Find this video's record (or create it).
     let record = day.videoProgress.find(v => v.videoId === incomingVideoId);
@@ -670,11 +784,15 @@ router.patch('/:id/day/:dayNumber/video-progress', authMiddleware, async (req, r
       if (!record.watched && ratio >= VIDEO_WATCH_THRESHOLD) {
         record.watched = true;
         record.watchedAt = new Date();
+        newlyWatched = true;
       }
     }
 
     roadmap.markModified('days');
     await roadmap.save();
+
+    // Phase 8: crossing the watch threshold counts as studying today.
+    if (newlyWatched) await recordStudyActivity(req.userId, localDate);
 
     res.json(serializeVideoProgress(day));
   } catch (error) {
@@ -774,7 +892,7 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
 router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, async (req, res) => {
   try {
     const { id, dayNumber } = req.params;
-    const { answers } = req.body;
+    const { answers, localDate } = req.body;
 
     if (!Array.isArray(answers)) {
       return res.status(400).json({ error: 'answers array is required.' });
@@ -840,8 +958,15 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, async (req, res) 
     const isHindi = req.query.lang === 'hi';
     if (isHindi) await ensureQuizHindi(day);
 
+    // Phase 7: adaptive remediation. Runs AFTER the attempt is recorded on `day`;
+    // may splice in one new day and renumber LATER days (completed days untouched).
+    const remediation = await maybeInsertRemediationDay(roadmap, day);
+
     roadmap.markModified('days');
     await roadmap.save();
+
+    // Phase 8: submitting a module quiz counts as studying today.
+    await recordStudyActivity(req.userId, localDate);
 
     res.json({
       score,
@@ -851,6 +976,7 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, async (req, res) 
       anyVideoWatched,
       dayCompleted,
       attemptCount: prevCount + 1,
+      remediationInserted: remediation, // { dayNumber, topic, subtopic } or null
       // Full review (with correct answers + explanations) is fine post-submit.
       questions: quizQuestions.map((q, idx) => {
         const useHi = isHindi && q.hindiTranslated;
@@ -868,6 +994,61 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, async (req, res) 
   } catch (error) {
     console.error('Submit module quiz error:', error);
     res.status(500).json({ error: 'Server error submitting module quiz.' });
+  }
+});
+
+// GET /api/roadmap/:id/day/:dayNumber/quiz/result
+// Returns the student's LAST stored module-quiz attempt (score + full per-question
+// review) so it's visible on revisit — not just on the one-time post-submit screen.
+// Purely surfaces already-persisted moduleQuizAttempt data (what Phase 4 reads).
+router.get('/:id/day/:dayNumber/quiz/result', authMiddleware, async (req, res) => {
+  try {
+    const { id, dayNumber } = req.params;
+    const isHindi = req.query.lang === 'hi';
+
+    const roadmap = await Roadmap.findOne({ _id: id, userId: req.userId });
+    if (!roadmap) return res.status(404).json({ error: 'Roadmap not found.' });
+
+    const day = roadmap.days.find(d => d.dayNumber === parseInt(dayNumber, 10));
+    if (!day) return res.status(404).json({ error: 'Day not found in roadmap.' });
+
+    const attempt = day.moduleQuizAttempt;
+    if (!attempt || !attempt.attempted) return res.json({ attempted: false });
+
+    // Combine stored attempt (selections/correctness) with the cached quiz
+    // (explanations + Hindi text) for a full, localized review.
+    if (isHindi) {
+      const changed = await ensureQuizHindi(day);
+      if (changed) { roadmap.markModified('days'); await roadmap.save(); }
+    }
+    const quizQs = day.moduleQuiz?.questions || [];
+    const questions = (attempt.questions || []).map((aq, idx) => {
+      const mq = quizQs[idx];
+      const useHi = isHindi && mq?.hindiTranslated;
+      return {
+        questionText: useHi ? (mq.translatedHindiQuestionText || mq.questionText) : (mq?.questionText || aq.questionText),
+        options: (useHi && mq?.translatedHindiOptions?.length === (mq?.options || []).length) ? mq.translatedHindiOptions : (mq?.options || aq.options),
+        selectedIndex: aq.selectedIndex,
+        correctIndex: aq.correctIndex,
+        isCorrect: aq.isCorrect,
+        topic: aq.topic,
+        explanation: useHi ? (mq?.translatedHindiExplanation || mq?.explanation || '') : (mq?.explanation || '')
+      };
+    });
+
+    res.json({
+      attempted: true,
+      score: attempt.score,
+      total: attempt.total,
+      passed: attempt.passed,
+      passThreshold: attempt.passThreshold || QUIZ_PASS_THRESHOLD,
+      attemptCount: attempt.attemptCount,
+      anyVideoWatched: isAnyVideoWatched(day),
+      questions
+    });
+  } catch (error) {
+    console.error('Get quiz result error:', error);
+    res.status(500).json({ error: 'Server error loading quiz result.' });
   }
 });
 
@@ -913,14 +1094,17 @@ router.get('/:id/day/:dayNumber/quiz/question/:qIndex/audio', authMiddleware, as
     const textToSpeak = `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}. ${optionsStr}.`;
 
     const textHash = generateContentHash(textToSpeak);
-    const filename = `quiz-${id}-day-${dayNumber}-q${idx}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
+    // Renumbering-proof cache key: content hash only, NOT dayNumber. The audio
+    // is defined by its text; when Phase 7 renumbers a day the audio moves with
+    // the subdoc and its hash is unchanged, so the cache still hits at the new number.
+    const filename = `quiz-${id}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
 
     // Self-healing disk cache check
     if (q[fieldName] && audioFileExists(filename)) {
       return res.json({ audioUrl: q[fieldName] });
     }
 
-    const lockKey = `quiz:${id}:${dayNumber}:q${idx}:${isHindi ? 'hi' : 'en'}:${textHash}`;
+    const lockKey = `quiz:${id}:${isHindi ? 'hi' : 'en'}:${textHash}`;
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
@@ -1087,7 +1271,10 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     }
 
     const textHash = generateContentHash(textToSpeak);
-    const filename = `roadmap-${id}-day-${dayNumber}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
+    // Renumbering-proof cache key: content hash only, NOT dayNumber (see the quiz
+    // audio endpoint). Day content moves with the subdoc on a Phase 7 insertion,
+    // so the cached audio stays valid at the day's new number.
+    const filename = `roadmap-${id}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
 
     // Self-healing disk cache check
     if (targetDay[fieldName] && audioFileExists(filename)) {
@@ -1095,7 +1282,7 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     }
 
     // Synthesize speech via Sarvam Bulbul API
-    const lockKey = `roadmap:${id}:${dayNumber}:${isHindi ? 'hi' : 'en'}:${textHash}`;
+    const lockKey = `roadmap:${id}:${isHindi ? 'hi' : 'en'}:${textHash}`;
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {

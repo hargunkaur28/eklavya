@@ -41,6 +41,7 @@ export const translations = {
       retakeTest: 'Retake Test',
       studyRoadmap: 'Study Roadmap',
       diagnosticReview: 'Diagnostic Review',
+      remediationBadge: 'Added for you',
       completionGate: 'Watch a video and pass the module quiz to complete this day.',
       practiceMode: 'Practice Mode',
       progressWeakTopics: 'Progress & Weak Topics',
@@ -61,6 +62,13 @@ export const translations = {
       reviewDay: (n) => `Review Day ${n}`,
       reviewDays: 'Review days',
       allTopicsHeading: 'All quizzed topics',
+      continueHeading: 'Continue where you left off',
+      continueCta: 'Continue',
+      allDaysComplete: 'You’ve completed every day — great work! 🎉',
+      streakCurrentLabel: 'day streak',
+      streakLongestLabel: 'Longest',
+      streakDaysUnit: (n) => `${n} ${n === 1 ? 'day' : 'days'}`,
+      streakStartMsg: 'Study today to start your streak!',
       yourRoadmapProgress: 'Your Roadmap Progress',
       daysCompleted: (done, total) => `${done} of ${total} days completed`,
       videosWatchedStat: (done, total) => `${done} of ${total} videos watched`,
@@ -106,6 +114,33 @@ export const translations = {
       completionGate: 'Watch a video and pass the module quiz to complete this day.'
     },
 
+    // Practice Mode (Phase 6)
+    practice: {
+      title: 'Practice Mode',
+      intro: 'Practise extra questions on any topic — separate from your roadmap.',
+      chooseSubject: 'Subject',
+      chooseTopic: 'Topic',
+      topicPlaceholder: 'e.g. Probability, Trigonometry…',
+      weakTopicsHint: 'Practise a weak topic:',
+      noSubjects: 'Start a roadmap first to practise its subjects.',
+      start: 'Start Practice',
+      generating: 'Generating practice questions…',
+      unavailable: 'Could not generate a practice quiz right now. Please try again.',
+      retry: 'Try Again',
+      submit: 'Submit',
+      submitting: 'Scoring…',
+      answerAll: 'Answer every question to submit.',
+      questionOf: (n, total) => `Question ${n} of ${total}`,
+      scoreLine: (s, t) => `You scored ${s} / ${t}`,
+      practiceAgain: 'Practise again (new questions)',
+      changeTopic: 'Change topic',
+      reviewHeading: 'Answer Review',
+      yourAnswer: 'Your answer',
+      correctAnswer: 'Correct answer',
+      explanation: 'Explanation:',
+      notCounted: 'Practice is just for revision — it doesn’t affect your roadmap or progress.'
+    },
+
     // Module Quiz (Phase 3)
     quiz: {
       title: 'Module Quiz',
@@ -129,7 +164,12 @@ export const translations = {
       correctAnswer: 'Correct answer',
       explanation: 'Explanation:',
       lastAttempt: (s, t) => `Last attempt: ${s} / ${t}`,
-      reviewHeading: 'Answer Review'
+      reviewHeading: 'Answer Review',
+      remediationAdded: (day, topic) => `We've added a review day (Day ${day}) on "${topic}" to help you master it.`,
+      lastResultHeading: 'Your last attempt',
+      viewReview: 'View full review',
+      backToSummary: 'Back',
+      attemptCountLabel: (n) => `${n} attempt${n === 1 ? '' : 's'}`
     },
 
     // Diagnostic Review Page
@@ -351,6 +391,7 @@ export const translations = {
       retakeTest: 'फिर से टेस्ट लें',
       studyRoadmap: 'अध्ययन रोडमैप',
       diagnosticReview: 'डायग्नोस्टिक समीक्षा',
+      remediationBadge: 'आपके लिए जोड़ा गया',
       completionGate: 'इस दिन को पूरा करने के लिए एक वीडियो देखें और मॉड्यूल क्विज़ उत्तीर्ण करें।',
       practiceMode: 'अभ्यास मोड',
       progressWeakTopics: 'प्रगति और कमज़ोर विषय',
@@ -371,6 +412,13 @@ export const translations = {
       reviewDay: (n) => `दिन ${n} दोहराएँ`,
       reviewDays: 'दिन दोहराएँ',
       allTopicsHeading: 'सभी क्विज़ किए गए विषय',
+      continueHeading: 'जहाँ छोड़ा था वहीं से जारी रखें',
+      continueCta: 'जारी रखें',
+      allDaysComplete: 'आपने हर दिन पूरा कर लिया — बहुत बढ़िया! 🎉',
+      streakCurrentLabel: 'दिन की स्ट्रीक',
+      streakLongestLabel: 'सबसे लंबी',
+      streakDaysUnit: (n) => `${n} दिन`,
+      streakStartMsg: 'अपनी स्ट्रीक शुरू करने के लिए आज पढ़ें!',
       yourRoadmapProgress: 'आपकी रोडमैप प्रगति',
       videosWatchedStat: (done, total) => `${total} में से ${done} वीडियो देखे गए`,
       daysCompleted: (done, total) => `${total} में से ${done} दिन पूरे`,
@@ -416,6 +464,33 @@ export const translations = {
       completionGate: 'इस दिन को पूरा करने के लिए एक वीडियो देखें और मॉड्यूल क्विज़ उत्तीर्ण करें।'
     },
 
+    // Practice Mode (Phase 6)
+    practice: {
+      title: 'अभ्यास मोड',
+      intro: 'किसी भी विषय पर अतिरिक्त प्रश्नों का अभ्यास करें — आपके रोडमैप से अलग।',
+      chooseSubject: 'विषय',
+      chooseTopic: 'टॉपिक',
+      topicPlaceholder: 'जैसे प्रायिकता, त्रिकोणमिति…',
+      weakTopicsHint: 'किसी कमज़ोर विषय का अभ्यास करें:',
+      noSubjects: 'विषयों का अभ्यास करने के लिए पहले एक रोडमैप शुरू करें।',
+      start: 'अभ्यास शुरू करें',
+      generating: 'अभ्यास प्रश्न बन रहे हैं…',
+      unavailable: 'अभी अभ्यास क्विज़ नहीं बन सकी। कृपया फिर से प्रयास करें।',
+      retry: 'फिर से प्रयास करें',
+      submit: 'जमा करें',
+      submitting: 'अंकन हो रहा है…',
+      answerAll: 'जमा करने के लिए हर प्रश्न का उत्तर दें।',
+      questionOf: (n, total) => `प्रश्न ${n} / ${total}`,
+      scoreLine: (s, t) => `आपने ${s} / ${t} अंक प्राप्त किए`,
+      practiceAgain: 'फिर से अभ्यास करें (नए प्रश्न)',
+      changeTopic: 'टॉपिक बदलें',
+      reviewHeading: 'उत्तर समीक्षा',
+      yourAnswer: 'आपका उत्तर',
+      correctAnswer: 'सही उत्तर',
+      explanation: 'व्याख्या:',
+      notCounted: 'अभ्यास सिर्फ़ दोहराने के लिए है — यह आपके रोडमैप या प्रगति को प्रभावित नहीं करता।'
+    },
+
     // Module Quiz (Phase 3)
     quiz: {
       title: 'मॉड्यूल क्विज़',
@@ -439,7 +514,12 @@ export const translations = {
       correctAnswer: 'सही उत्तर',
       explanation: 'व्याख्या:',
       lastAttempt: (s, t) => `पिछला प्रयास: ${s} / ${t}`,
-      reviewHeading: 'उत्तर समीक्षा'
+      reviewHeading: 'उत्तर समीक्षा',
+      remediationAdded: (day, topic) => `हमने "${topic}" पर एक रिवीज़न दिन (दिन ${day}) जोड़ा है ताकि आप इसमें महारत हासिल कर सकें।`,
+      lastResultHeading: 'आपका पिछला प्रयास',
+      viewReview: 'पूरी समीक्षा देखें',
+      backToSummary: 'वापस',
+      attemptCountLabel: (n) => `${n} प्रयास`
     },
 
     // Diagnostic Review Page

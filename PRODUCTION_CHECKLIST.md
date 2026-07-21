@@ -35,6 +35,24 @@
       a cramped chip bar should become a bottom-sheet / dropdown picker
       or a dedicated "Subjects" screen on mobile
 
+### Phase 6 (Practice Mode) — flagged for later
+- [ ] No permanent practice history — practice sessions are ephemeral
+      (24h TTL, just for scoring). For exam-prep students, "am I
+      improving on this topic over time?" is a natural want. Consider a
+      lightweight PracticeResult store + a per-topic trend view. Out of
+      scope today, but a real future feature, not a silent gap.
+
+### Phase 8 (Streaks) — flagged for later
+- [ ] Streak current+longest are computed CLIENT-SIDE from User.studyDates,
+      and the client SENDS its own localDate when recording activity.
+      Fine while a streak is cosmetic (no stakes). BUT if streaks ever
+      gate rewards / a leaderboard / anything consequential, move BOTH
+      the computation AND the day-stamping server-side (derive the day
+      from server time + a stored per-user timezone; stop trusting
+      client-sent dates) — otherwise a manipulated client can inflate
+      its own streak. Dates themselves are already server-stored; only
+      the write-time date source and the aggregation are client-trusting.
+
 ### Architecture / Tech Debt
 - [ ] sarvamClient.js's TTS chunking (chat widget) duplicates the
       chunking/WAV-header logic in textToSpeech.js (roadmap/diagnostic

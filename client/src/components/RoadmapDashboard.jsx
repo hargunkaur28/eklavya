@@ -4,11 +4,13 @@ import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
 import { formatGradeSubject, formatGradeSubjectDash } from '../utils/subjectTranslations.js';
 import { getTranslatedTopic } from '../utils/topicTranslations.js';
-import { CheckSquare, Square, Clock, ExternalLink, RefreshCw, Trophy, BookOpen, CheckCircle2, XCircle, Sparkles, Dumbbell } from 'lucide-react';
+import { CheckSquare, Square, Clock, ExternalLink, RefreshCw, Trophy, CheckCircle2, XCircle, Sparkles, Play, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import SpeakerButton from './SpeakerButton.jsx';
 import DashboardSidebar from './DashboardSidebar.jsx';
 import ProgressWeakTopics from './ProgressWeakTopics.jsx';
+import PracticeMode from './PracticeMode.jsx';
+import StreakWidget from './StreakWidget.jsx';
 
 export default function RoadmapDashboard() {
   const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
@@ -106,6 +108,10 @@ export default function RoadmapDashboard() {
 
   const completedCount = localDays.filter((d) => d.completed).length;
   const progressPercent = Math.round((completedCount / activeRoadmap.totalDays) * 100);
+  // Phase 9: first not-fully-complete day (completed = video watched + quiz passed).
+  // Per-subject automatically — localDays is the selected roadmap's days.
+  const nextDayIdx = localDays.findIndex((d) => !d.completed);
+  const nextDay = nextDayIdx >= 0 ? localDays[nextDayIdx] : null;
   // Phase 2: video completion is a distinct signal from days completed. OR logic —
   // a day counts if ANY of its videos is watched. Falls back to the legacy scalar
   // `videoWatched` so days not yet migrated still register.
@@ -205,9 +211,31 @@ export default function RoadmapDashboard() {
           </button>
         </header>
 
+        {/* Phase 8: account-wide study streak (shown across all sections) */}
+        <StreakWidget />
+
         {/* ROADMAP SECTION CONTENT */}
         {activeSection === 'roadmap' && (
           <>
+            {/* Phase 9: continue where you left off (per selected subject) */}
+            {nextDay ? (
+              <button
+                type="button"
+                className="continue-card"
+                onClick={() => navigate(`/roadmap/${activeRoadmap._id}/day/${nextDay.dayNumber}`)}
+              >
+                <div className="continue-info">
+                  <span className="continue-heading"><Play size={14} /> {t.continueHeading}</span>
+                  <span className="continue-day">
+                    {typeof t.day === 'function' ? t.day(nextDay.dayNumber) : `Day ${nextDay.dayNumber}`} — {(language === 'hi' && hindiData?.[nextDayIdx]?.topic) ? hindiData[nextDayIdx].topic : nextDay.topic}
+                  </span>
+                </div>
+                <span className="continue-cta">{t.continueCta} <ArrowRight size={16} /></span>
+              </button>
+            ) : (
+              <div className="all-done-card"><Trophy size={18} /> {t.allDaysComplete}</div>
+            )}
+
             {/* Progress Banner */}
             <div className="dashboard-progress-card">
               <div className="progress-info-row">
@@ -278,9 +306,18 @@ export default function RoadmapDashboard() {
                     <div className="day-card-content">
                       <div className="day-card-top">
                         <span className="day-pill">{typeof t.day === 'function' ? t.day(day.dayNumber) : `Day ${day.dayNumber}`}</span>
+                        {day.isRemediation && (
+                          <span className="remediation-badge"><Sparkles size={12} /> {t.remediationBadge}</span>
+                        )}
                         <span className="day-time">
                           <Clock size={14} /> {typeof t.mins === 'function' ? t.mins(day.estimatedMinutes || 30) : `${day.estimatedMinutes || 30} mins`}
                         </span>
+                        {day.moduleQuizAttempt?.attempted && (
+                          <span className={`day-quiz-score ${day.moduleQuizAttempt.passed ? 'passed' : 'failed'}`}>
+                            {day.moduleQuizAttempt.passed ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                            {day.moduleQuizAttempt.score}/{day.moduleQuizAttempt.total}
+                          </span>
+                        )}
                       </div>
 
                       <h4>{displayTopic}</h4>
@@ -306,17 +343,9 @@ export default function RoadmapDashboard() {
           </>
         )}
 
-        {/* PRACTICE MODE — placeholder shell (built in Phase 6) */}
+        {/* PRACTICE MODE — Phase 6 */}
         {activeSection === 'practice' && (
-          <div className="dashboard-placeholder-panel">
-            <Dumbbell size={40} className="placeholder-icon" />
-            <h3>{t.practiceMode}</h3>
-            <span className="placeholder-badge">{t.comingSoonTitle}</span>
-            <p>{t.practiceComingSubtitle}</p>
-            <button type="button" className="placeholder-cta" onClick={() => setActiveSection('roadmap')}>
-              <BookOpen size={16} /> {t.backToRoadmapCta}
-            </button>
-          </div>
+          <PracticeMode roadmaps={roadmaps} defaultRoadmap={activeRoadmap} />
         )}
 
         {/* PROGRESS / WEAK TOPICS — Phase 4 */}

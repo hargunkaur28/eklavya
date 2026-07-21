@@ -56,6 +56,12 @@ const daySchema = new mongoose.Schema({
   content: { type: String, default: '' },
   resources: [resourceSchema],
   contentGenerated: { type: Boolean, default: false },
+  // Phase 7: inserted remediation days (adaptive). Grounded in a real weak
+  // sub-topic via a live Groq call — never a template. Marks let the UI badge
+  // them and prevent inserting a duplicate for the same sub-topic.
+  isRemediation: { type: Boolean, default: false },
+  remediationForSubtopic: { type: String, default: '' },
+  remediationFromDay: { type: Number, default: null },
   translatedHindiTopic: { type: String, default: '' },
   hindiTopicTranslated: { type: Boolean, default: false },
   translatedHindiFocus: { type: String, default: '' },
