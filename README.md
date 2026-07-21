@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-**Project Eklavya** (*Ek Shikshak, Har Vidhyarthi*) is a personalized, AI-driven learning platform built specifically for Indian students preparing for Class 10 Science, Class 11 JEE Foundation, and Class 12 NEET Biology. The platform assesses a student's current knowledge through an interactive diagnostic quiz, identifies strong and weak concept areas, and automatically constructs a day-by-day study roadmap. Each study day includes AI-generated lesson content and curated educational YouTube video recommendations from trusted Indian channels (Physics Wallah, Vedantu, Unacademy, Khan Academy India, Aakash). The platform features bilingual support (English and Hindi), voice input and text-to-speech read-aloud, progress tracking, and a floating site-wide AI assistant widget.
+**Project Eklavya** (*Ek Shikshak, Har Vidhyarthi*) is a personalized, AI-driven learning platform built specifically for Indian students preparing for Class 10 Science, Class 11 JEE Foundation, and Class 12 NEET Biology. The platform assesses a student's current knowledge through an interactive diagnostic quiz, identifies strong and weak concept areas, and automatically constructs a day-by-day study roadmap. Each study day combines curated educational YouTube videos from trusted Indian channels (Physics Wallah, Vedantu, Unacademy, Khan Academy India, Aakash) with AI-generated lesson content and a per-day module quiz — a day is completed only once its video is watched and its quiz passed. Beyond the core roadmap, the dashboard tracks video and quiz progress, flags weak sub-topics from quiz results, adaptively inserts remediation days when a student stays stuck, supports multiple subjects per student, offers a standalone practice mode, and keeps students consistent with account-wide study streaks and a "continue where you left off" prompt. The platform features bilingual support (English and Hindi) across UI, quizzes, lessons, and weak-topic labels, voice input and text-to-speech read-aloud, and a floating site-wide AI assistant widget.
 
 ---
 
@@ -25,17 +25,17 @@
   - Models: `DiagnosticSession.js`, `DiagnosticResult.js`, `Roadmap.js`
 
 ### 2. Day-by-Day Study Plan & Verified YouTube Resources
-- **What it does:** Students follow a daily study schedule. Clicking into any day presents a 2-3 paragraph detailed lesson module generated on first view, alongside real embeddable YouTube video recommendations fetched via YouTube Data API v3 (strictly filtered to exclude low-quality content and brand competitors like BYJU'S).
+- **What it does:** Students follow a daily study schedule. Clicking into any day presents a 2-3 paragraph detailed lesson module generated on first view, alongside real embeddable YouTube video recommendations fetched via YouTube Data API v3 (strictly filtered to exclude low-quality content and brand competitors like BYJU'S). Each day brings together watchable videos (with per-video completion tracking — Feature 8), the lesson module, and a module quiz (Feature 9): a day is only marked **complete** once the student has both watched a video *and* passed that day's quiz, a gate enforced by the backend.
 - **Components/Pages:**
-  - `client/src/pages/DayDetail.jsx` (Daily study module view)
-  - `client/src/components/RoadmapDashboard.jsx` (Roadmap day overview tab)
+  - `client/src/pages/DayDetail.jsx` (Daily study module view, video players, and module quiz)
+  - `client/src/components/RoadmapDashboard.jsx` (Roadmap day overview with per-day completion + quiz score indicators)
 - **Backend Routes & Utilities:**
   - `GET /api/roadmap/:id/day/:dayNumber` (Dynamic lesson generation via Groq + YouTube resource fetch)
-  - `PATCH /api/roadmap/:id/day/:dayNumber` (Toggle day completion status)
+  - `PATCH /api/roadmap/:id/day/:dayNumber` (Update day completion status — rejected with `409` unless the video-watched + quiz-passed gate is satisfied)
   - `server/src/utils/fetchYoutubeResources.js` (YouTube Data API integration)
 
 ### 3. Bilingual Support (English & Hindi)
-- **What it does:** The site operates seamlessly in both English and Hindi. Toggling the global language switch in the header updates UI translations and triggers server-side translation of quizzes, diagnostic reviews, and study roadmap content into Devanagari Hindi using Sarvam AI Translate (`en-IN` to `hi-IN`), with a Groq AI translation fallback.
+- **What it does:** The site operates seamlessly in both English and Hindi. Toggling the global language switch in the header updates UI translations and triggers server-side translation of quizzes, diagnostic reviews, and study roadmap content into Devanagari Hindi using Sarvam AI Translate (`en-IN` to `hi-IN`), with a Groq AI translation fallback. Module quiz questions, options, and explanations (Feature 9) and weak-topic sub-topic labels (Feature 10) are translated the same way and cached alongside their English originals; option order is preserved so quiz scoring (which is index-based) is unaffected by translation. Failed translations of short technical labels are re-attempted on the next Hindi read rather than cached as English.
 - **Components/Pages:**
   - `client/src/context/LanguageContext.jsx` (Global language provider & `localStorage` persistence)
   - `client/src/data/translations.js` (Bilingual string dictionary)
@@ -45,7 +45,7 @@
   - `server/src/utils/translateAndCache.js` & `server/src/utils/localizeReply.js`
 
 ### 4. Text-to-Speech (Sarvam Bulbul v3 & Web Speech Fallback)
-- **What it does:** Allows students to listen to quiz questions, diagnostic review explanations, roadmap lesson content, and AI chatbot replies read aloud in either English (`en-IN`) or Hindi (`hi-IN`).
+- **What it does:** Allows students to listen to diagnostic quiz questions, diagnostic review explanations, roadmap lesson content, **module quiz questions**, and AI chatbot replies read aloud in either English (`en-IN`) or Hindi (`hi-IN`). Module quiz audio is read from the correct language version of the question (matching what's on screen) and disk-cached by content hash, so it survives day renumbering from adaptive remediation (Feature 12).
 - **Implementation:**
   - Server-side synthesis via Sarvam AI Bulbul v3 TTS API (`/text-to-speech`). Long prose is split into sentence chunks (<450 chars) and dynamically concatenated using an in-memory RIFF WAV subchunk parser (`combineWavBase64`).
   - Audio files are saved to `server/uploads/audio/` with MD5 content-hash caching and periodic temporary file sweeps.
@@ -56,6 +56,7 @@
   - `GET /api/diagnostic/:id/question/:questionIndex/audio`
   - `POST /api/diagnostic/live-audio`
   - `GET /api/roadmap/:id/day/:dayNumber/audio`
+  - `GET /api/roadmap/:id/day/:dayNumber/quiz/question/:qIndex/audio` (module quiz question audio)
   - `server/src/utils/textToSpeech.js`
 
 ### 5. Speech-to-Text & Real-Time Live Dictation
@@ -85,14 +86,62 @@
   - `server/src/routes/chat.js`
   - `server/src/data/siteRoutes.js` & `server/src/data/siteKnowledge.js`
 
-### 7. Progress Tracking & Command Center
-- **What it does:** Displays an interactive dashboard with total days completed, progress percentages, active roadmap schedule, topic breakdown, and diagnostic score review.
+### 7. Student Dashboard: Navigation, Multi-Subject, Streaks & Continue
+- **What it does:** The `/dashboard` is organized by a persistent left sidebar (which collapses to a fixed bottom nav bar on mobile) with sections for **Study Roadmap**, **Practice Mode**, **Progress & Weak Topics**, and **Diagnostic Review**. It shows days-completed and videos-watched progress, the active roadmap schedule, per-day quiz scores, and the diagnostic review.
+  - **Multi-subject:** A student can hold several active roadmaps — one per (grade + subject) course. The sidebar's subject switcher (a horizontal chip bar on mobile) swaps the displayed roadmap instantly with no page reload, and the selection persists in `localStorage`. Adding a subject routes through the existing onboarding/diagnostic flow; regenerating a roadmap archives only the prior roadmap for that *same* course (never deletes another subject), preserving progress history.
+  - **Study streaks (account-wide):** Current and longest study streaks are shown near the top of the dashboard. A day counts as "active" when the student watches a video to threshold, submits a module quiz, or completes a practice session (not logins). Streaks use the student's **local-time** day boundaries (the client stamps its own local date).
+  - **Continue where you left off:** A prominent card links to the first not-yet-complete day of the currently selected subject.
 - **Components/Pages:**
   - `client/src/components/RoadmapDashboard.jsx` (`/dashboard` route)
+  - `client/src/components/DashboardSidebar.jsx` (sidebar / mobile bottom nav + subject switcher)
+  - `client/src/components/StreakWidget.jsx` & `client/src/utils/streak.js` (streak display + client-side current/longest computation)
 - **Backend Routes & Utilities:**
-  - `GET /api/roadmap/mine`
+  - `GET /api/roadmap/mine` (default active roadmap) & `GET /api/roadmap/list` (all active roadmaps for the subject switcher)
+  - `GET /api/activity` (account-wide study dates) & `server/src/utils/recordActivity.js` (records local study dates from quiz/practice/video activity onto `User.studyDates`)
 
-### 8. User Authentication & Session Management
+### 8. Video Completion Tracking
+- **What it does:** Each day's videos embed via the **YouTube IFrame Player API** behind a click-to-play thumbnail facade, so a real player (and its network cost) only loads once the student chooses to watch that video. Watch progress is tracked per video and a video is marked **watched** at **90%** of its duration. Progress updates the on-screen bar roughly every second and is persisted to the server about every 10 seconds plus on pause/end (furthest point reached; scrubbing back never lowers it). Every video on a day tracks independently, and video completion is a separate signal from day completion (surfaced as a "videos watched" dashboard stat).
+- **Components/Pages:**
+  - `client/src/components/YouTubePlayer.jsx` (tracked IFrame player) & `client/src/pages/DayDetail.jsx`
+- **Backend Routes & Utilities:**
+  - `PATCH /api/roadmap/:id/day/:dayNumber/video-progress`
+  - `Roadmap.js` day `videoProgress[]` (per-`videoId` records; 90% `VIDEO_WATCH_THRESHOLD`)
+
+### 9. Per-Module Quizzes & Day Completion Gating
+- **What it does:** Every roadmap day has a **10-question** multiple-choice quiz generated once from *that day's specific topic and lesson content* via Groq and cached on the day (revisits get the same quiz, not a new random one). Passing requires **≥70%**, and a day is only completed when a video is watched **and** the quiz is passed. Students can retake anytime. After submitting, the score and full per-question review (correct answers + explanations) stay visible on revisit — the day page shows the last attempt with "view full review" and "retake", and each day card shows a score pill. Per-question wrong-answer detail is stored to power weak-topic flagging.
+- **Components/Pages:**
+  - `client/src/components/ModuleQuiz.jsx` (take → score → review, persistent last-attempt summary) & `client/src/pages/DayDetail.jsx`
+- **Backend Routes & Utilities:**
+  - `GET /api/roadmap/:id/day/:dayNumber/quiz` (generate + cache; answers withheld)
+  - `POST /api/roadmap/:id/day/:dayNumber/quiz/submit` (score, store attempt, gate completion)
+  - `GET /api/roadmap/:id/day/:dayNumber/quiz/result` (re-view the stored attempt later)
+  - `Roadmap.js` day `moduleQuiz` (cached questions) + `moduleQuizAttempt` (score + per-question detail)
+
+### 10. Weak-Topic Flagging & Progress Insights
+- **What it does:** Each day's quiz questions are pinned to a **canonical per-day sub-topic list**. The Progress & Weak Topics dashboard section aggregates per-question results by sub-topic across all days and surfaces the topics the student is weakest in (below **60%** average accuracy, with at least 2 questions answered), each linking back to the relevant day(s). Sub-topic labels are localized in Hindi mode. This is the data adaptive remediation (Feature 12) consumes; practice-mode results are deliberately excluded from it.
+- **Components/Pages:**
+  - `client/src/components/ProgressWeakTopics.jsx`
+- **Backend Routes & Utilities:**
+  - `GET /api/roadmap/:id/weak-topics`
+  - `Roadmap.js` day `subtopics` / `subtopicsHindi`
+
+### 11. Practice Mode
+- **What it does:** A separate practice section where a student picks a subject and a topic (or taps a flagged weak topic as a shortcut) and gets a freshly generated 10-question quiz for open revision. Practice quizzes are generated **fresh every session** (higher Groq temperature + a rotation seed, no per-topic caching), so repeating a topic yields a different set of questions. Practice is intentionally isolated — it never marks roadmap days complete and never feeds the roadmap's weak-topic data. Sessions are ephemeral (24-hour TTL); questions localize to Hindi and support read-aloud.
+- **Components/Pages:**
+  - `client/src/components/PracticeMode.jsx`
+- **Backend Routes & Utilities:**
+  - `POST /api/practice/generate`, `POST /api/practice/submit`
+  - Model: `PracticeSession.js`
+
+### 12. Adaptive Roadmap Remediation
+- **What it does:** When a student retakes a day's quiz (2nd or later attempt) and a sub-topic is *still* weak (<60%), the system inserts a single **remediation day** immediately after that day, with its title and focus generated by a live Groq call grounded in that specific weak sub-topic (no template filler — if generation fails, nothing is inserted). Only *later* days are renumbered; already-completed days are never modified. At most one remediation day is inserted per submission, and never a duplicate for the same sub-topic. Inserted days carry an "Added for you" badge, and the student is notified on the post-quiz screen.
+- **Components/Pages:**
+  - Surfaced in `client/src/components/RoadmapDashboard.jsx` (badge) & `client/src/components/ModuleQuiz.jsx` (notice)
+- **Backend Routes & Utilities:**
+  - Triggered inside `POST /api/roadmap/:id/day/:dayNumber/quiz/submit`
+  - `Roadmap.js` day `isRemediation`, `remediationForSubtopic`, `remediationFromDay`
+
+### 13. User Authentication & Session Management
 - **What it does:** Secure user signup and login using password hashing (bcryptjs) and JSON Web Tokens (JWT). Includes a **Remember Me** option that extends session lifetime to 90 days (stored in persistent `localStorage`), while standard sessions default to 30 days.
 - **Components/Pages:**
   - `client/src/components/AuthModal.jsx` (Login / Signup modal dialog)
@@ -139,11 +188,11 @@ project-eklavya/
 │   ├── public/                 # Static public assets (e.g. chatbot-avatar.png)
 │   ├── src/
 │   │   ├── assets/             # Component image assets
-│   │   ├── components/         # Reusable React components (Header, Hero, ChatWidget, SpeakerButton, etc.)
+│   │   ├── components/         # Reusable React components (Header, ChatWidget, SpeakerButton, RoadmapDashboard, DashboardSidebar, YouTubePlayer, ModuleQuiz, ProgressWeakTopics, PracticeMode, StreakWidget, etc.)
 │   │   ├── context/            # React Context providers (AuthContext.jsx, LanguageContext.jsx)
 │   │   ├── data/               # Course catalog (courses.js) and translation dictionary (translations.js)
 │   │   ├── pages/              # Top-level page views (DiagnosticReview.jsx, DayDetail.jsx)
-│   │   ├── utils/              # Client utility helpers (subject & topic translation mappers)
+│   │   ├── utils/              # Client utility helpers (subject & topic translation mappers, streak.js)
 │   │   ├── App.jsx             # Main Router configuration & global ChatWidget mount
 │   │   ├── main.jsx            # React root entry point
 │   │   └── styles.css          # Global design tokens and component styling
@@ -154,10 +203,10 @@ project-eklavya/
 │   ├── src/
 │   │   ├── data/               # Static route catalog (siteRoutes.js) & grounding knowledge (siteKnowledge.js)
 │   │   ├── middleware/         # Auth verification middleware (auth.js)
-│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap)
-│   │   ├── routes/             # Express API routes (auth.js, diagnostic.js, roadmap.js, chat.js)
+│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession)
+│   │   ├── routes/             # Express API routes (auth.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
 │   │   ├── scripts/            # Database remediation and utility maintenance scripts
-│   │   ├── utils/              # Backend integrations (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js)
+│   │   ├── utils/              # Backend integrations (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js)
 │   │   └── server.js           # Server entry point, MongoDB connection, & graceful shutdown
 │   └── package.json            # Server dependencies and scripts
 │
@@ -180,12 +229,22 @@ project-eklavya/
 | `GET` | `/api/diagnostic/:id/question/:questionIndex/audio` | Yes | Synthesize/fetch cached audio WAV for diagnostic question stem & options |
 | `POST` | `/api/diagnostic/live-audio` | Yes (Rate limited) | On-demand audio synthesis for live quiz questions |
 | `POST` | `/api/roadmap/generate` | Yes | Generate personalized 10-15 day study roadmap based on diagnostic weak areas |
-| `GET` | `/api/roadmap/mine` | Yes | Fetch current user's active study roadmap |
+| `GET` | `/api/roadmap/mine` | Yes | Fetch current user's default active study roadmap |
+| `GET` | `/api/roadmap/list` | Yes | List all of the user's active roadmaps (multi-subject switcher) |
 | `GET` | `/api/roadmap/:id` | Yes | Fetch roadmap by ID |
 | `GET` | `/api/roadmap/:id/day/:dayNumber` | Yes | Fetch daily study module content & YouTube resources |
 | `PATCH` | `/api/roadmap/:id/day/:dayNumber` | Yes | Toggle completion status for a study day |
 | `POST` | `/api/roadmap/:id/translate` | Yes | Translate study roadmap topics & focus items into Hindi |
 | `GET` | `/api/roadmap/:id/day/:dayNumber/audio` | Yes | Synthesize/fetch cached audio WAV for roadmap day content |
+| `PATCH` | `/api/roadmap/:id/day/:dayNumber/video-progress` | Yes | Record per-video watch progress (90% = watched) |
+| `GET` | `/api/roadmap/:id/day/:dayNumber/quiz` | Yes | Generate/fetch the cached module quiz for a day |
+| `POST` | `/api/roadmap/:id/day/:dayNumber/quiz/submit` | Yes | Submit module quiz — score, gate day completion, trigger remediation |
+| `GET` | `/api/roadmap/:id/day/:dayNumber/quiz/result` | Yes | Fetch the stored last module-quiz attempt + full review |
+| `GET` | `/api/roadmap/:id/day/:dayNumber/quiz/question/:qIndex/audio` | Yes | Synthesize/fetch cached audio for a module quiz question |
+| `GET` | `/api/roadmap/:id/weak-topics` | Yes | Aggregated weak sub-topics across the roadmap's quiz results |
+| `POST` | `/api/practice/generate` | Yes | Generate a fresh practice quiz for a subject + topic |
+| `POST` | `/api/practice/submit` | Yes | Score a practice quiz (no roadmap/weak-topic side effects) |
+| `GET` | `/api/activity` | Yes | Account-wide study-activity dates (for streak display) |
 | `POST` | `/api/chat/message` | Optional (Rate limited) | Process AI Chatbot query (intent detection, Q&A, navigation, video search, localization) |
 | `POST` | `/api/chat/tts` | Optional (Rate limited) | Synthesize base64 audio for chatbot response via Sarvam Bulbul v3 |
 | `POST` | `/api/chat/stt` | Optional (Rate limited) | Speech-to-text audio upload processing via Sarvam saaras v3 |

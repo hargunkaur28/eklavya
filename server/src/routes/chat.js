@@ -190,6 +190,10 @@ IMPORTANT RULES:
     if (userContext.currentDay) prompt += `\n- Currently on Day ${userContext.currentDay} of their study roadmap`;
     if (userContext.completedDays) prompt += `\n- Completed ${userContext.completedDays} days so far`;
     if (userContext.totalDays) prompt += `\n- Total days in roadmap: ${userContext.totalDays}`;
+
+    if (userContext.subject) {
+      prompt += `\n\nCRITICAL: This student's roadmap is for ${userContext.grade ? userContext.grade + ' ' : ''}${userContext.subject}. When you refer to THEIR studies or roadmap, use exactly this subject and grade. The SITE KNOWLEDGE course list above describes what the platform OFFERS in general — it is NOT what this student is enrolled in. Do NOT tell this student they are studying Science, or any subject other than "${userContext.subject}", unless they explicitly ask about a different subject.`;
+    }
   }
 
   return prompt;
@@ -218,7 +222,21 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
     if (req.userId) {
       try {
         const user = await User.findById(req.userId).select('name');
-        const roadmap = await Roadmap.findOne({ userId: req.userId }).sort({ createdAt: -1 });
+
+        // Prefer the roadmap the student is actually VIEWING (the widget sends its
+        // selected roadmapId), so the chatbot reflects the selected subject in a
+        // multi-subject account. Fall back to the newest ACTIVE roadmap. Never use
+        // archived roadmaps. The subject/grade come from the DB (ownership-checked),
+        // not from the client, so they can't be spoofed.
+        let roadmap = null;
+        if (clientContext?.roadmapId) {
+          try {
+            roadmap = await Roadmap.findOne({ _id: clientContext.roadmapId, userId: req.userId, archived: { $ne: true } });
+          } catch { /* malformed id — fall through to newest active */ }
+        }
+        if (!roadmap) {
+          roadmap = await Roadmap.findOne({ userId: req.userId, archived: { $ne: true } }).sort({ createdAt: -1 });
+        }
 
         if (user || roadmap) {
           userContext = {};
@@ -240,12 +258,9 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
       }
     }
 
-    // Also accept client-side context (e.g. current page, roadmap ID)
+    // Anonymous users: accept client-side context as-is.
     if (clientContext && !userContext) {
       userContext = clientContext;
-    } else if (clientContext && userContext) {
-      // Merge client context into server-fetched context
-      if (clientContext.roadmapId) userContext.roadmapId = clientContext.roadmapId;
     }
 
     // ── Sequential intent classification ──
