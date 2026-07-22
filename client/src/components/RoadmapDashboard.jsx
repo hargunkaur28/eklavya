@@ -170,7 +170,7 @@ export default function RoadmapDashboard() {
       <div className="dashboard-card">
       <DashboardSidebar
         activeSection={activeSection}
-        onSelect={setActiveSection}
+        onSelect={(key) => (key === 'mentor' ? navigate('/mentor') : setActiveSection(key))}
         t={t}
       />
       <div className="dashboard-main">

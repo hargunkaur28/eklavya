@@ -4,6 +4,7 @@ import multer from 'multer';
 import { localizeReply } from '../utils/localizeReply.js';
 import { sarvamTextToSpeech, sarvamSpeechToText } from '../utils/sarvamClient.js';
 import { fetchYoutubeResources } from '../utils/fetchYoutubeResources.js';
+import { callGroqChat } from '../utils/groqClient.js';
 import { siteRoutes, navigationKeywords } from '../data/siteRoutes.js';
 import siteKnowledge from '../data/siteKnowledge.js';
 import User from '../models/User.js';
@@ -111,39 +112,9 @@ function detectResourceIntent(message) {
 }
 
 // ── Groq API Helpers ──
-
-async function callGroqChat(messages, jsonMode = false) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === 'gsk_demo_key') {
-    throw new Error('Groq API key not configured');
-  }
-
-  const body = {
-    model: 'llama-3.3-70b-versatile',
-    messages,
-    temperature: 0.4
-  };
-
-  if (jsonMode) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(body)
-  });
-
-  if (!response.ok) {
-    throw new Error(`Groq API responded with status ${response.status}`);
-  }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content?.trim() || '';
-}
+// callGroqChat now lives in utils/groqClient.js (shared with Mentor / Notes /
+// grading). chat.js's calls pass no options, so they keep the original defaults
+// (llama-3.3-70b-versatile @ 0.4).
 
 /**
  * Extract the study topic from a user message using Groq (narrow, low-risk use).

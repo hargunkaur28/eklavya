@@ -18,6 +18,7 @@ import AIForLearning from './components/AIForLearning.jsx';
 import AuthPage from './pages/AuthPage.jsx';
 import ChangePasswordPage from './pages/ChangePasswordPage.jsx';
 import ProfilePage from './pages/ProfilePage.jsx';
+import MentorPage from './pages/MentorPage.jsx';
 import Onboarding from './components/Onboarding.jsx';
 import RoadmapDashboard from './components/RoadmapDashboard.jsx';
 import ParentDashboard from './components/ParentDashboard.jsx';
@@ -190,6 +191,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <PageShell><ProfilePage /></PageShell>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/mentor"
+              element={
+                <ProtectedRoute>
+                  <PageShell><MentorPage /></PageShell>
                 </ProtectedRoute>
               }
             />

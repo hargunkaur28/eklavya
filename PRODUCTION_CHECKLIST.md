@@ -85,3 +85,15 @@
       passed attempt from Phase 3 testing — harmless but be aware if
       testing against that same roadmap
       
+### Track 2 — PDF Notes: deferred follow-ons (out of current scope)
+- [ ] "Saved notes library" — PDF notes are currently generate → review →
+      download (ephemeral, not persisted). Persisting them (Cloudinary
+      resource_type:'raw' + a browse/delete UI) is a materially bigger
+      feature (storage mgmt, cost accumulation). Build only on explicit
+      request, not speculatively.
+- [ ] Hindi notes content in the PDF — Phase 2.1 generates English notes
+      (react-pdf's built-in Helvetica). Rendering Devanagari requires
+      registering a Noto Sans Devanagari TTF in the PDF (Font.register)
+      + generating Hindi content from Groq. The Notes UI strings are
+      already bilingual; only the generated PDF *content* is English-only
+      for now. Accepted limitation — add the font asset to enable Hindi.

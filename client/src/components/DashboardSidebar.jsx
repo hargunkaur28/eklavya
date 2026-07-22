@@ -13,8 +13,12 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
     { key: 'practice', label: t.practiceMode, Icon: Dumbbell },
     { key: 'progress', label: t.progressWeakTopics, Icon: TrendingUp },
     { key: 'review', label: t.diagnosticReview, Icon: Trophy },
+    // Track 1: Mentor uses the ChatWidget avatar; selecting it routes to /mentor.
+    { key: 'mentor', label: t.mentor, img: '/chatbot-avatar.png' },
     { key: 'settings', label: t.settings, Icon: Settings }
   ];
+  // Icon node for a pill — the chatbot avatar image when `img` is set, else a lucide icon.
+  const pillIcon = ({ Icon, img }) => (img ? <img className="pill-avatar" src={img} alt="" /> : <Icon size={18} />);
 
   const circleRefs = useRef([]);
   const tlRefs = useRef([]);
@@ -80,21 +84,21 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
   return (
     <aside className="dashboard-sidebar pill-sidebar" aria-label={t.navMenuLabel}>
       <ul className="pill-list" role="menubar">
-        {items.map(({ key, label, Icon }, i) => (
-          <li key={key} role="none">
+        {items.map((item, i) => (
+          <li key={item.key} role="none">
             <button
               type="button"
               role="menuitem"
-              className={`pill ${activeSection === key ? 'is-active' : ''}`}
-              onClick={() => onSelect(key)}
+              className={`pill ${activeSection === item.key ? 'is-active' : ''}`}
+              onClick={() => onSelect(item.key)}
               onMouseEnter={() => handleEnter(i)}
               onMouseLeave={() => handleLeave(i)}
-              aria-current={activeSection === key ? 'page' : undefined}
+              aria-current={activeSection === item.key ? 'page' : undefined}
             >
               <span className="hover-circle" aria-hidden="true" ref={(el) => { circleRefs.current[i] = el; }} />
               <span className="label-stack">
-                <span className="pill-label"><Icon size={18} /> {label}</span>
-                <span className="pill-label-hover" aria-hidden="true"><Icon size={18} /> {label}</span>
+                <span className="pill-label">{pillIcon(item)} {item.label}</span>
+                <span className="pill-label-hover" aria-hidden="true">{pillIcon(item)} {item.label}</span>
               </span>
             </button>
           </li>

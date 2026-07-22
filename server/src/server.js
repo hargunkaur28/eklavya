@@ -15,6 +15,7 @@ import practiceRoutes from './routes/practice.js';
 import activityRoutes from './routes/activity.js';
 import chatRoutes from './routes/chat.js';
 import adminRoutes from './routes/admin.js';
+import mentorRoutes from './routes/mentor.js';
 import { parentPasswordChangeGate } from './middleware/auth.js';
 import { startTempAudioCleanup, stopTempAudioCleanup } from './utils/textToSpeech.js';
 
@@ -75,6 +76,8 @@ app.use('/api/activity', parentPasswordChangeGate, activityRoutes);
 app.use('/api/chat', chatRoutes);
 // Phase 6: admin panel (read-only). No parent gate — admin is never a parent.
 app.use('/api/admin', adminRoutes);
+// Track 1: Mentor — persistent AI tutor chat (student-only; enforced in the router).
+app.use('/api/mentor', mentorRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

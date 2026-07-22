@@ -182,6 +182,15 @@
   - `PATCH /api/auth/profile`, `POST /api/auth/profile/photo`, `DELETE /api/auth/profile/photo`
   - `server/src/utils/cloudinary.js`, `server/src/utils/imageSniff.js`; `User.js` field `photoUrl`
 
+### 17. Your Mentor (Persistent AI Tutor Chat)
+- **What it does:** A dedicated, ChatGPT-style **long-form AI tutor** (separate from the quick floating chatbot). A student opens **Mentor** from the dashboard sidebar and gets a full page: a conversation list on the left ("+ New chat", past chats by auto-generated title, click to switch, delete) and a message thread on the right. Unlike the one-liner chatbot, Mentor gives **paragraph-level, teaching-quality explanations** (rendered as Markdown, revealed with a typing animation), stays scoped to academic help for the platform's subjects, and **persists** — conversations and their full history are stored server-side and survive reloads. It is **read-only** with respect to the rest of the app (never touches roadmap/quiz/streak data), and every conversation is ownership-checked (a student can never fetch another student's thread — `404` on mismatch).
+- **Components/Pages:**
+  - `client/src/pages/MentorPage.jsx` (two-panel chat, Markdown + typing animation, reusing the ChatWidget avatar)
+- **Backend Routes & Utilities:**
+  - `POST/GET /api/mentor/conversations`, `GET/DELETE /api/mentor/conversations/:id`, `POST /api/mentor/conversations/:id/message`
+  - `server/src/routes/mentor.js`, `server/src/models/Conversation.js` (embedded messages), `server/src/utils/groqClient.js` (shared Groq call, now used by the chatbot too)
+  - Student-only (`requireRole('student')`), per-user rate-limited, context capped to the last 20 messages / ~4000 tokens per request
+
 ---
 
 ## Tech Stack
@@ -190,6 +199,7 @@
 - **Framework:** React 19.0.0 (with `vite` 7.0.0 bundler)
 - **Routing:** `react-router-dom` 7.18.1
 - **Icons:** `lucide-react` 0.468.0
+- **Markdown:** `react-markdown` (renders the Mentor tutor's formatted replies)
 - **Animations:** `framer-motion` 12.42.2, `motion` 12.42.2, `gsap` 3.15.0, `ogl` 1.0.11 (3D WebGL visuals)
 - **Styling:** Vanilla CSS3 with root design tokens, Devanagari font overrides (`Noto Sans Devanagari`), and custom animations
 
@@ -223,7 +233,7 @@ project-eklavya/
 │   │   ├── components/         # Reusable React components (Header, ChatWidget, SpeakerButton, RoadmapDashboard, DashboardSidebar, YouTubePlayer, ModuleQuiz, ProgressWeakTopics, PracticeMode, StreakWidget, ParentAccessCard, ParentDashboard, AdminDashboard, AdminSettings, DashboardShell, Avatar, etc.)
 │   │   ├── context/            # React Context providers (AuthContext.jsx, LanguageContext.jsx)
 │   │   ├── data/               # Course catalog (courses.js) and translation dictionary (translations.js)
-│   │   ├── pages/              # Top-level page views (DiagnosticReview.jsx, DayDetail.jsx, AuthPage.jsx, ChangePasswordPage.jsx, ProfilePage.jsx, AdminLoginPage.jsx)
+│   │   ├── pages/              # Top-level page views (DiagnosticReview.jsx, DayDetail.jsx, AuthPage.jsx, ChangePasswordPage.jsx, ProfilePage.jsx, AdminLoginPage.jsx, MentorPage.jsx)
 │   │   ├── utils/              # Client utility helpers (subject & topic translation mappers, streak.js)
 │   │   ├── App.jsx             # Main Router configuration & global ChatWidget mount
 │   │   ├── main.jsx            # React root entry point
@@ -235,10 +245,10 @@ project-eklavya/
 │   ├── src/
 │   │   ├── data/               # Static route catalog (siteRoutes.js) & grounding knowledge (siteKnowledge.js)
 │   │   ├── middleware/         # Auth middleware (auth.js — authMiddleware, requireRole, parentPasswordChangeGate)
-│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession, AdminConfig)
-│   │   ├── routes/             # Express API routes (auth.js, admin.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
+│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession, AdminConfig, Conversation)
+│   │   ├── routes/             # Express API routes (auth.js, admin.js, mentor.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
 │   │   ├── scripts/            # Database remediation and utility maintenance scripts
-│   │   ├── utils/              # Backend integrations & helpers (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js, validatePassword.js, rateLimiter.js, generateTempPassword.js, weakTopics.js, cloudinary.js, imageSniff.js, adminCreds.js)
+│   │   ├── utils/              # Backend integrations & helpers (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js, validatePassword.js, rateLimiter.js, generateTempPassword.js, weakTopics.js, cloudinary.js, imageSniff.js, adminCreds.js, groqClient.js)
 │   │   └── server.js           # Server entry point, MongoDB connection, & graceful shutdown
 │   └── package.json            # Server dependencies and scripts
 │
@@ -289,6 +299,11 @@ project-eklavya/
 | `GET` | `/api/admin/student/:studentId` | Yes (admin) | A student's active roadmaps (read-only) |
 | `GET` | `/api/admin/student/:studentId/roadmap/:roadmapId/weak-topics` | Yes (admin) | A student's weak topics (read-only) |
 | `GET` | `/api/admin/student/:studentId/activity` | Yes (admin) | A student's study-activity dates (read-only) |
+| `POST` | `/api/mentor/conversations` | Yes (student) | Create a new Mentor conversation |
+| `GET` | `/api/mentor/conversations` | Yes (student) | List own conversations (most recent first) |
+| `GET` | `/api/mentor/conversations/:id` | Yes (student) | Full message history (ownership-checked → 404) |
+| `POST` | `/api/mentor/conversations/:id/message` | Yes (student, rate limited) | Send a message, persist both turns, return the reply |
+| `DELETE` | `/api/mentor/conversations/:id` | Yes (student) | Delete a conversation (ownership-checked → 404) |
 | `POST` | `/api/chat/message` | Optional (Rate limited) | Process AI Chatbot query (intent detection, Q&A, navigation, video search, localization) |
 | `POST` | `/api/chat/tts` | Optional (Rate limited) | Synthesize base64 audio for chatbot response via Sarvam Bulbul v3 |
 | `POST` | `/api/chat/stt` | Optional (Rate limited) | Speech-to-text audio upload processing via Sarvam saaras v3 |
