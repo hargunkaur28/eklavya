@@ -6,6 +6,7 @@ import { translateQuestionsArray, translateTextWithSarvam } from '../utils/trans
 import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash } from '../utils/textToSpeech.js';
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
+import { normalizeTopic } from '../utils/weakTopics.js';
 
 const router = express.Router();
 
@@ -345,13 +346,19 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
     }));
 
     // Every grading above is resolved — now it is safe to compute score + split.
+    // Track 4.1: bucket topics by normalizeTopic (the SAME rule the roadmap's
+    // weak-topic aggregation uses) so casing/whitespace variants of one topic MERGE
+    // instead of splitting into separate weak/strong entries. The first-seen ORIGINAL
+    // label is kept for display — normalized (lowercased) strings are never surfaced.
     let score = 0;
-    const topicStats = {};
+    const topicStats = {}; // normalizedKey -> { label, correct, total }
     for (const fq of fullQuestions) {
       if (fq.isCorrect) score += 1;
-      if (!topicStats[fq.topic]) topicStats[fq.topic] = { correct: 0, total: 0 };
-      topicStats[fq.topic].total += 1;
-      if (fq.isCorrect) topicStats[fq.topic].correct += 1;
+      const key = normalizeTopic(fq.topic);
+      if (!key) continue;
+      if (!topicStats[key]) topicStats[key] = { label: fq.topic || 'General', correct: 0, total: 0 };
+      topicStats[key].total += 1;
+      if (fq.isCorrect) topicStats[key].correct += 1;
     }
 
     // Explanations are MCQ-only (written questions carry AI feedback instead).
@@ -367,10 +374,10 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
 
     const weakTopics = [];
     const strongTopics = [];
-    Object.keys(topicStats).forEach(t => {
-      const accuracy = topicStats[t].correct / topicStats[t].total;
-      if (accuracy < 0.5) weakTopics.push(t);
-      if (accuracy >= 0.75) strongTopics.push(t);
+    Object.values(topicStats).forEach(s => {
+      const accuracy = s.correct / s.total;
+      if (accuracy < 0.5) weakTopics.push(s.label);   // original label, not the key
+      if (accuracy >= 0.75) strongTopics.push(s.label);
     });
 
     let recommendation = '';

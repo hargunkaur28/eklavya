@@ -1,4 +1,5 @@
 import { callGroqChat } from './groqClient.js';
+import { isEnglish } from '../config/taxonomy.js';
 
 // Track 3: generate `count` written (essay or short-answer) questions with a
 // grading anchor. Returns [{ type:'written', questionText, expectedPoints,
@@ -12,7 +13,7 @@ const clamp = (s, n) => String(s ?? '').slice(0, n);
 // Which written style a subject uses. English is essay-weighted; everything else
 // is short-answer. (Track 4 will refine English into writing/fusion sub-tracks.)
 export function writtenStyleFor(subject) {
-  return /english/i.test(String(subject || '')) ? 'essay' : 'short';
+  return isEnglish(subject) ? 'essay' : 'short';
 }
 
 // `subtopics`: the SAME canonical sub-topic list the MCQ path built for this

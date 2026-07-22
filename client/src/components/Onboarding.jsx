@@ -5,17 +5,8 @@ import { useLanguage } from '../context/LanguageContext.jsx';
 import { CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
 import { WrittenInput, isWrittenAnswered } from './WrittenQuestion.jsx';
-
-const GRADELIST = [
-  'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
-  'Class 5', 'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10',
-  'Class 11', 'Class 12'
-];
-
-const SUBJECTLIST = [
-  'Science', 'Maths', 'Physics', 'Chemistry', 'Biology',
-  'JEE', 'NEET', 'English', 'Hindi', 'Social Science'
-];
+// Track 4.1: canonical subject/grade lists now come from the single source.
+import { SUBJECTS as SUBJECTLIST, GRADES as GRADELIST } from '../data/taxonomy.js';
 
 export default function Onboarding() {
   const [step, setStep] = useState(1); // 1: Select Grade/Subject, 2: Quiz

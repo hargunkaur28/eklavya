@@ -1,3 +1,7 @@
+// Track 4.1: this is the DISPLAY (en/hi) layer only. The canonical subject list
+// itself lives in ../data/taxonomy.js (SUBJECTS) — the keys here must cover it
+// (plus 'General', which is a runtime fallback, not a selectable subject). A test
+// guards that every canonical subject has en + hi names here.
 export const subjectNames = {
   en: {
     Maths: 'Maths',

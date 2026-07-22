@@ -7,7 +7,9 @@ export async function fetchYoutubeResources(topic, subject, grade) {
   }
 
   try {
-    const query = `${topic} ${subject} class ${grade} explanation`;
+    // Track 4.1 fix: `grade` already carries "Class N" (e.g. "Class 10"), so the
+    // literal "class " prefix produced a doubled "class Class 10" in the query.
+    const query = `${topic} ${subject} ${grade} explanation`;
     const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&regionCode=IN&relevanceLanguage=hi&maxResults=5&key=${apiKey}`;
 
     const response = await fetch(searchUrl);

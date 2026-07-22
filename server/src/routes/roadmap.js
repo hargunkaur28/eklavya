@@ -9,6 +9,7 @@ import { recordStudyActivity } from '../utils/recordActivity.js';
 import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN_QUESTIONS } from '../utils/weakTopics.js';
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
+import { normalizeGrade, normalizeSubject } from '../config/taxonomy.js';
 
 // Track 3: module quizzes include written questions for English subjects (essay-
 // based by nature); other subjects stay MCQ-only. A written answer "passes" at the
@@ -149,9 +150,15 @@ Explain the key theoretical concepts, important rules/formulas, and practical ap
   return `Welcome to Day's module on ${topic}. Focus: ${focus}`;
 }
 
-// Helper: Match hand-written course YouTube link
-function getResourceLinkForTopic(grade, subject) {
-  const key = `${grade.toLowerCase()}_${subject.toLowerCase()}`;
+// Helper: Match hand-written course YouTube link. Track 4.1: the lowercasing now
+// comes from the shared normalizer (also null-safe) instead of ad-hoc .toLowerCase()
+// — the substring-matching LOGIC is deliberately unchanged (bit-identical resolution
+// for the existing triad; verified by test). Exported for that test. NOTE: the
+// substring rules are legacy/fragile (e.g. "Class 11 Biology" resolves to the JEE
+// course because '11' is checked before 'biology') — preserved as-is, not "fixed",
+// because behaviour-preservation is the 4.1 contract; a real rethink is 4.2.
+export function getResourceLinkForTopic(grade, subject) {
+  const key = `${normalizeGrade(grade)}_${normalizeSubject(subject)}`;
   if (key.includes('10') && key.includes('science')) return 'pw-udaan-class-10';
   if (key.includes('11') || key.includes('jee')) return 'pw-arjuna-jee';
   if (key.includes('neet') || key.includes('biology')) return 'unacademy-neet-biology';
