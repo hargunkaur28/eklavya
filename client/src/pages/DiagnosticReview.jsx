@@ -143,7 +143,7 @@ export default function DiagnosticReview() {
           </div>
           <div>
             <h2>{t.testReview}</h2>
-            <p>{formatGradeSubject(result.grade, result.subject, language)} {t.assessment}</p>
+            <p>{formatGradeSubject(result.grade, result.subject, language, result.subSubject)} {t.assessment}</p>
           </div>
         </header>
 

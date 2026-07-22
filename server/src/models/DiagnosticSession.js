@@ -13,6 +13,7 @@ const diagnosticSessionSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   grade: { type: String, required: true },
   subject: { type: String, required: true },
+  subSubject: { type: String, default: '' }, // sub-subject split (additive, '' = flat)
   questions: [sessionQuestionSchema],
   used: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now, expires: 86400 } // 24-hour TTL

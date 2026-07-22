@@ -24,6 +24,7 @@ const diagnosticResultSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   grade: { type: String, required: true },
   subject: { type: String, required: true },
+  subSubject: { type: String, default: '' }, // sub-subject split (additive, '' = flat)
   questions: [questionDetailSchema],
   weakTopics: [{ type: String }],
   strongTopics: [{ type: String }],

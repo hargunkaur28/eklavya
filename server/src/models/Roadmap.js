@@ -130,6 +130,10 @@ const roadmapSchema = new mongoose.Schema({
   diagnosticResultId: { type: mongoose.Schema.Types.ObjectId, ref: 'DiagnosticResult', default: null },
   grade: { type: String, required: true },
   subject: { type: String, required: true },
+  // Sub-subject split (English/Science/Social Science). Part of the course identity
+  // key {userId, grade, subject, subSubject}. Additive + backward-compatible: '' on
+  // existing docs (flat/non-split subjects) — same default pattern as `role`/`type`.
+  subSubject: { type: String, default: '' },
   totalDays: { type: Number, required: true },
   days: [daySchema],
   translatedHindiDays: [translatedDaySchema],

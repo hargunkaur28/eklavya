@@ -187,7 +187,7 @@ export default function RoadmapDashboard() {
                 they'd be out of place on Practice / Progress / Review / Settings. */}
             {activeSection === 'roadmap' && (
               <>
-                <h2>{formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}</h2>
+                <h2>{formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language, activeRoadmap.subSubject)}</h2>
                 <p className="dashboard-subtitle">
                   {t.tailoredScheduleSubtitle}
                 </p>
@@ -324,7 +324,7 @@ export default function RoadmapDashboard() {
 
             <DashboardStatCards
               userName={userName}
-              subjectLabel={formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language)}
+              subjectLabel={formatGradeSubjectDash(activeRoadmap.grade, activeRoadmap.subject, language, activeRoadmap.subSubject)}
               nextDay={nextDay ? { dayNumber: nextDay.dayNumber, topic: nextTopic } : null}
               onContinue={() => nextDay && navigate(`/roadmap/${activeRoadmap._id}/day/${nextDay.dayNumber}`)}
             />
@@ -378,7 +378,7 @@ export default function RoadmapDashboard() {
                   </div>
                   <div>
                     <h3>{t.diagnosticAssessmentResults}</h3>
-                    <p>{formatGradeSubject(diagnosticData.grade, diagnosticData.subject, language)}</p>
+                    <p>{formatGradeSubject(diagnosticData.grade, diagnosticData.subject, language, diagnosticData.subSubject)}</p>
                   </div>
                 </div>
 

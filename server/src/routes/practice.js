@@ -132,6 +132,7 @@ function serializePracticeQuestion(q, idx, isHindi) {
 router.post('/generate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { grade, subject, topic } = req.body;
+    const subSubject = typeof req.body.subSubject === 'string' ? req.body.subSubject.trim() : '';
     const isHindi = req.query.lang === 'hi' || req.body.language === 'hi';
     if (!subject || !topic) {
       return res.status(400).json({ error: 'subject and topic are required.' });
@@ -158,7 +159,7 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
     const includeWritten = req.body.includeWritten === true;
     let writtenQs = [];
     if (includeWritten) {
-      writtenQs = await generateWritten(grade, subject, topic, PRACTICE_WRITTEN_COUNT, writtenStyleFor(subject));
+      writtenQs = await generateWritten(grade, subject, topic, PRACTICE_WRITTEN_COUNT, writtenStyleFor(subject, subSubject));
     }
     const mcqCount = PRACTICE_QUESTIONS - writtenQs.length;
     const mcqQs = quizData.questions.slice(0, mcqCount).map(q => ({
@@ -174,6 +175,7 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       userId: req.userId,
       grade: grade || '',
       subject,
+      subSubject,
       topic,
       questions: [...mcqQs, ...writtenQs]
     });

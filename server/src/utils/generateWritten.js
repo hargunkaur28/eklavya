@@ -1,5 +1,5 @@
 import { callGroqChat } from './groqClient.js';
-import { isEnglish } from '../config/taxonomy.js';
+import { isEnglish, isWrittenHeavy } from '../config/taxonomy.js';
 
 // Track 3: generate `count` written (essay or short-answer) questions with a
 // grading anchor. Returns [{ type:'written', questionText, expectedPoints,
@@ -12,8 +12,15 @@ const clamp = (s, n) => String(s ?? '').slice(0, n);
 
 // Which written style a subject uses. English is essay-weighted; everything else
 // is short-answer. (Track 4 will refine English into writing/fusion sub-tracks.)
-export function writtenStyleFor(subject) {
-  return isEnglish(subject) ? 'essay' : 'short';
+// Track (subject-splitting): the essay/short decision now depends on the SUB-SUBJECT,
+// not just "is English". English Writing/Fusion → essay; English Grammar/Reading →
+// short; everything non-English → short. Defensive backward-compat: an English doc
+// with NO subSubject (pre-split / legacy — shouldn't exist post-migration) keeps the
+// old "all English = essay" behaviour.
+export function writtenStyleFor(subject, subSubject) {
+  if (!isEnglish(subject)) return 'short';
+  if (!subSubject) return 'essay';
+  return isWrittenHeavy(subject, subSubject) ? 'essay' : 'short';
 }
 
 // `subtopics`: the SAME canonical sub-topic list the MCQ path built for this

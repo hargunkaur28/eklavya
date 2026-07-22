@@ -24,6 +24,7 @@ const practiceSessionSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   grade: { type: String, default: '' },
   subject: { type: String, required: true },
+  subSubject: { type: String, default: '' }, // sub-subject split (additive, '' = flat)
   topic: { type: String, required: true },
   questions: [practiceQuestionSchema],
   used: { type: Boolean, default: false },

@@ -42,9 +42,33 @@ export const gradeNames = {
   }
 };
 
-export function formatGradeSubject(grade, subject, language = 'en') {
+// Track (subject-splitting): display names for the sub-subjects. Keys are the exact
+// canonical sub-subject strings from taxonomy.js's SUB_SUBJECTS. Physics/Chemistry/
+// Biology reuse the same Hindi as their flat-subject counterparts for consistency.
+export const subSubjectNames = {
+  en: {
+    Writing: 'Writing', Grammar: 'Grammar', Reading: 'Reading', Fusion: 'Fusion',
+    Physics: 'Physics', Chemistry: 'Chemistry', Biology: 'Biology', Combined: 'Combined',
+    Economics: 'Economics', Civics: 'Civics', Geography: 'Geography', History: 'History'
+  },
+  hi: {
+    Writing: 'लेखन', Grammar: 'व्याकरण', Reading: 'पठन', Fusion: 'संयुक्त',
+    Physics: 'भौतिक विज्ञान', Chemistry: 'रसायन विज्ञान', Biology: 'जीव विज्ञान', Combined: 'संयुक्त',
+    Economics: 'अर्थशास्त्र', Civics: 'नागरिक शास्त्र', Geography: 'भूगोल', History: 'इतिहास'
+  }
+};
+
+export function getSubSubjectName(subSubject, language = 'en') {
+  if (!subSubject) return '';
+  return subSubjectNames[language]?.[subSubject] || subSubject;
+}
+
+// `subSubject` is OPTIONAL (4th arg, after language) so existing 3-arg callers are
+// unaffected; when present it's appended as " · <SubSubject>" (e.g. "Class 10 — English · Grammar").
+export function formatGradeSubject(grade, subject, language = 'en', subSubject = '') {
   if (!grade && !subject) return '';
-  const normSub = subjectNames[language]?.[subject] || subject || '';
+  let normSub = subjectNames[language]?.[subject] || subject || '';
+  if (subSubject) normSub = `${normSub} · ${getSubSubjectName(subSubject, language)}`;
   let normGrade = grade || '';
 
   if (language === 'hi' && normGrade && normGrade.toLowerCase().startsWith('class ')) {
@@ -59,9 +83,10 @@ export function formatGradeSubject(grade, subject, language = 'en') {
   return normGrade || normSub;
 }
 
-export function formatGradeSubjectDash(grade, subject, language = 'en') {
+export function formatGradeSubjectDash(grade, subject, language = 'en', subSubject = '') {
   if (!grade && !subject) return '';
-  const normSub = subjectNames[language]?.[subject] || subject || '';
+  let normSub = subjectNames[language]?.[subject] || subject || '';
+  if (subSubject) normSub = `${normSub} · ${getSubSubjectName(subSubject, language)}`;
   let normGrade = grade || '';
 
   if (language === 'hi' && normGrade && normGrade.toLowerCase().startsWith('class ')) {

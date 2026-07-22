@@ -7,6 +7,7 @@ import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash }
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 import { normalizeTopic } from '../utils/weakTopics.js';
+import { subjectScopeLabel, isWrittenHeavy, isKnownSubSubject, hasSubSubjects } from '../config/taxonomy.js';
 
 const router = express.Router();
 
@@ -81,13 +82,15 @@ function validateGroqQuizJSON(data) {
   return true;
 }
 
-async function callGroqForQuiz(grade, subject) {
+async function callGroqForQuiz(grade, subject, subSubject) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey || apiKey === 'gsk_demo_key') {
     throw new Error('Groq API Key not configured');
   }
 
-  const prompt = `Generate a diagnostic quiz for Grade: "${grade}" and Subject: "${subject}".
+  // Scope the quiz to the chosen sub-subject (or all areas for Fusion/Combined).
+  const scope = subjectScopeLabel(subject, subSubject);
+  const prompt = `Generate a diagnostic quiz for Grade: "${grade}" and Subject: "${scope}".
 Return ONLY a valid JSON object matching this exact shape:
 {
   "questions": [
@@ -99,7 +102,7 @@ Return ONLY a valid JSON object matching this exact shape:
     }
   ]
 }
-Provide exactly 6 multiple choice questions covering foundational concepts for ${grade} ${subject}.
+Provide exactly 6 multiple choice questions covering foundational concepts for ${grade} ${scope}. Every question must be about ${scope} — do NOT drift to other areas of ${subject}.
 CRITICAL ACCURACY RULE: Double check all math and facts. correctIndex MUST be the exact 0-based integer index (0, 1, 2, or 3) of the option containing the mathematically and scientifically true correct answer. No markdown formatting, raw JSON only.`;
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -186,18 +189,28 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       return res.status(400).json({ error: 'Grade and subject are required.' });
     }
 
+    // Sub-subject (English/Science/Social Science split). Optional; validated against
+    // the parent subject's list when provided. Flat subjects get ''.
+    const subSubject = typeof req.body.subSubject === 'string' ? req.body.subSubject.trim() : '';
+    if (subSubject && !isKnownSubSubject(subject, subSubject)) {
+      return res.status(400).json({ error: `"${subSubject}" is not a valid sub-subject of ${subject}.` });
+    }
+
     const key = `${grade.toLowerCase()}_${subject.toLowerCase()}`;
     let rawQuestions = null;
 
-    if (handWrittenQuizzes[key]) {
+    // Bypass the legacy static bank whenever a sub-subject is chosen — its key is
+    // subject-level ('class 10_science'), so it would bleed the general-Science bank
+    // into a Physics/Chemistry diagnostic. Sub-subject requests always generate fresh.
+    if (!subSubject && handWrittenQuizzes[key]) {
       rawQuestions = handWrittenQuizzes[key];
     } else {
       let quizData = null;
       try {
-        quizData = await callGroqForQuiz(grade, subject);
+        quizData = await callGroqForQuiz(grade, subject, subSubject);
         if (!validateGroqQuizJSON(quizData)) {
           console.warn('First Groq quiz validation failed, retrying once...');
-          quizData = await callGroqForQuiz(grade, subject);
+          quizData = await callGroqForQuiz(grade, subject, subSubject);
         }
       } catch (groqErr) {
         console.warn('Groq quiz generation failed, using fallback bank:', groqErr.message);
@@ -229,12 +242,15 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
     // list so written questions tag FROM those labels (verbatim) — they merge into
     // the same topic buckets as MCQs in the weak/strong split instead of creating
     // drift singletons that could over-weight the roadmap from one data point.
-    const includeWritten = req.body.includeWritten === true;
+    // Written-heavy sub-subjects (English Writing/Fusion) auto-include written
+    // questions; everything else only when the student opts in via the toggle.
+    const includeWritten = req.body.includeWritten === true || isWrittenHeavy(subject, subSubject);
     let writtenQuestions = [];
     if (includeWritten) {
       const mcqTopics = [...new Set(mcqQuestions.map(q => q.topic).filter(Boolean))];
       const written = await generateWritten(
-        grade, subject, subject, DIAGNOSTIC_WRITTEN_COUNT, writtenStyleFor(subject), mcqTopics
+        grade, subject, subjectScopeLabel(subject, subSubject),
+        DIAGNOSTIC_WRITTEN_COUNT, writtenStyleFor(subject, subSubject), mcqTopics
       );
       writtenQuestions = written.map(w => ({
         type: 'written',
@@ -251,6 +267,7 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       userId: req.userId,
       grade,
       subject,
+      subSubject,
       questions: sessionQuestions
     });
 
@@ -296,6 +313,7 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
 
     let finalGrade = grade || session.grade;
     let finalSubject = subject || session.subject;
+    const finalSubSubject = session.subSubject || ''; // carried from the session (never client-trusted)
 
     // Track 3: mixed grading. MCQ = index compare (sync); written = AI-graded
     // (async), binarised at the 60% diagnostic bar. We AWAIT ALL gradings to
@@ -391,6 +409,7 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
       userId: req.userId,
       grade: finalGrade,
       subject: finalSubject,
+      subSubject: finalSubSubject,
       questions: fullQuestions,
       weakTopics,
       strongTopics,

@@ -9,7 +9,7 @@ import { recordStudyActivity } from '../utils/recordActivity.js';
 import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN_QUESTIONS } from '../utils/weakTopics.js';
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
-import { normalizeGrade, normalizeSubject } from '../config/taxonomy.js';
+import { normalizeGrade, normalizeSubject, subjectScopeLabel, isWrittenHeavy } from '../config/taxonomy.js';
 
 // Track 3: module quizzes include written questions for English subjects (essay-
 // based by nature); other subjects stay MCQ-only. A written answer "passes" at the
@@ -64,13 +64,15 @@ function validateRoadmapJSON(data) {
 }
 
 // Call Groq API for Roadmap
-async function callGroqForRoadmap(grade, subject, weakTopics, strongTopics) {
+async function callGroqForRoadmap(grade, subject, subSubject, weakTopics, strongTopics) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey || apiKey === 'gsk_demo_key') {
     throw new Error('Groq API Key not configured');
   }
 
-  const prompt = `Create a customized step-by-step study roadmap for a student in Grade: "${grade}", Subject: "${subject}".
+  const scope = subjectScopeLabel(subject, subSubject);
+  const prompt = `Create a customized step-by-step study roadmap for a student in Grade: "${grade}", Subject: "${scope}".
+Every day's topic MUST stay within ${scope} — do not include topics from other areas of ${subject}.
 Diagnostic assessment results:
 - Weak areas requiring extra focus: ${weakTopics.length > 0 ? weakTopics.join(', ') : 'None identified'}
 - Strong areas mastered: ${strongTopics.length > 0 ? strongTopics.join(', ') : 'General foundation'}
@@ -157,7 +159,11 @@ Explain the key theoretical concepts, important rules/formulas, and practical ap
 // substring rules are legacy/fragile (e.g. "Class 11 Biology" resolves to the JEE
 // course because '11' is checked before 'biology') — preserved as-is, not "fixed",
 // because behaviour-preservation is the 4.1 contract; a real rethink is 4.2.
-export function getResourceLinkForTopic(grade, subject) {
+export function getResourceLinkForTopic(grade, subject, subSubject = '') {
+  // Sub-subject courses have no matching static catalog entry, and the substring
+  // rules would mis-route them (a Science→Physics day linking the general Science
+  // course). Scope the bleed out: no deep-link when a sub-subject is chosen.
+  if (subSubject) return null;
   const key = `${normalizeGrade(grade)}_${normalizeSubject(subject)}`;
   if (key.includes('10') && key.includes('science')) return 'pw-udaan-class-10';
   if (key.includes('11') || key.includes('jee')) return 'pw-arjuna-jee';
@@ -490,12 +496,13 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       ? diagnostic.strongTopics
       : diagnostic.questions?.filter(a => a.isCorrect).map(a => a.topic) || [];
 
+    const subSubject = diagnostic.subSubject || '';
     let roadmapData = null;
     try {
-      roadmapData = await callGroqForRoadmap(diagnostic.grade, diagnostic.subject, weakTopics, strongTopics);
+      roadmapData = await callGroqForRoadmap(diagnostic.grade, diagnostic.subject, subSubject, weakTopics, strongTopics);
       if (!validateRoadmapJSON(roadmapData)) {
         console.warn('First Groq roadmap validation failed, retrying once...');
-        roadmapData = await callGroqForRoadmap(diagnostic.grade, diagnostic.subject, weakTopics, strongTopics);
+        roadmapData = await callGroqForRoadmap(diagnostic.grade, diagnostic.subject, subSubject, weakTopics, strongTopics);
       }
     } catch (err) {
       console.warn('Groq roadmap generation failed, generating fallback roadmap:', err.message);
@@ -523,7 +530,7 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       };
     }
 
-    const defaultResource = getResourceLinkForTopic(diagnostic.grade, diagnostic.subject);
+    const defaultResource = getResourceLinkForTopic(diagnostic.grade, diagnostic.subject, subSubject);
 
     const formattedDays = roadmapData.days.map((d, index) => ({
       dayNumber: d.dayNumber || index + 1,
@@ -541,8 +548,16 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
     // course (grade + subject) being regenerated — other subjects stay active,
     // so a student can hold e.g. Maths and Science roadmaps at once. Still an
     // archive (never a delete), so prior progress for this course is preserved.
+    // Identity key is now {userId, grade, subject, subSubject}: archive only the
+    // active roadmap for the SAME sub-subject course. Regenerating "English·Grammar"
+    // never touches "English·Fusion" or any other subject. Match subSubject exactly
+    // (including '' for flat subjects, so flat courses archive as before).
     await Roadmap.updateMany(
-      { userId: req.userId, archived: { $ne: true }, grade: diagnostic.grade, subject: diagnostic.subject },
+      {
+        userId: req.userId, archived: { $ne: true },
+        grade: diagnostic.grade, subject: diagnostic.subject,
+        subSubject: subSubject || { $in: ['', null] }
+      },
       { $set: { archived: true, archivedAt: new Date() } }
     );
 
@@ -551,6 +566,7 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       diagnosticResultId: diagnostic._id,
       grade: diagnostic.grade,
       subject: diagnostic.subject,
+      subSubject,
       totalDays: formattedDays.length,
       days: formattedDays,
       language: 'en'
@@ -861,16 +877,17 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
         explanation: q.explanation || ''
       }));
 
-      // Track 3: for English, swap a couple of MCQs for written questions. They're
-      // generated with topics from the day's own sub-topics so canonicalization
-      // pins them to the SAME canonical labels as the MCQs (→ identical weak-topic
-      // aggregation + remediation targeting).
-      if (writtenStyleFor(roadmap.subject) === 'essay') {
+      // Track (sub-subjects): auto-include written questions only for WRITTEN-HEAVY
+      // courses — English Writing & Fusion. English Grammar/Reading (and every other
+      // subject) stay MCQ-only in the cached module quiz (there's no per-attempt
+      // toggle here; the includeWritten toggle applies to diagnostic + practice).
+      if (isWrittenHeavy(roadmap.subject, roadmap.subSubject)) {
         // Pass the MCQ's canonical sub-topic list so written questions tag from the
         // SAME labels (not free-generated) — minimizes the synonym-drift that would
         // otherwise split written topics into their own weak-topic buckets.
         const written = await generateWritten(
-          roadmap.grade, roadmap.subject, day.topic, MODULE_WRITTEN_COUNT, 'essay', quizData.subtopics
+          roadmap.grade, roadmap.subject, day.topic, MODULE_WRITTEN_COUNT,
+          writtenStyleFor(roadmap.subject, roadmap.subSubject), quizData.subtopics
         );
         if (written.length) {
           built.splice(built.length - written.length, written.length, ...written);

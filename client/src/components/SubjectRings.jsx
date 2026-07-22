@@ -50,7 +50,7 @@ export default function SubjectRings({ roadmaps = [], activeRoadmapId, onSelect,
             aria-current={isActive ? 'true' : undefined}
           >
             <Ring percent={pct} />
-            <span className="subject-ring-name">{formatGradeSubjectDash(r.grade, r.subject, language)}</span>
+            <span className="subject-ring-name">{formatGradeSubjectDash(r.grade, r.subject, language, r.subSubject)}</span>
             <span className="subject-ring-sub">
               {typeof t.daysCompleted === 'function' ? t.daysCompleted(done, total) : `${done} of ${total} days`}
             </span>

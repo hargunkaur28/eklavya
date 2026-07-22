@@ -6,12 +6,14 @@ import { CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
 import { WrittenInput, isWrittenAnswered } from './WrittenQuestion.jsx';
 // Track 4.1: canonical subject/grade lists now come from the single source.
-import { SUBJECTS as SUBJECTLIST, GRADES as GRADELIST } from '../data/taxonomy.js';
+import { SUBJECTS as SUBJECTLIST, GRADES as GRADELIST, hasSubSubjects, subSubjectsFor } from '../data/taxonomy.js';
+import { getSubSubjectName } from '../utils/subjectTranslations.js';
 
 export default function Onboarding() {
   const [step, setStep] = useState(1); // 1: Select Grade/Subject, 2: Quiz
   const [selectedGrade, setSelectedGrade] = useState('Class 10');
   const [selectedSubject, setSelectedSubject] = useState('Science');
+  const [selectedSubSubject, setSelectedSubSubject] = useState(''); // sub-subject split
   const [quizSessionId, setQuizSessionId] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [hindiQuestions, setHindiQuestions] = useState([]);
@@ -34,7 +36,7 @@ export default function Onboarding() {
       setTranslatingHindi(true);
       authFetch(`/diagnostic/generate?lang=hi`, {
         method: 'POST',
-        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, language: 'hi', includeWritten })
+        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, subSubject: selectedSubSubject, language: 'hi', includeWritten })
       })
         .then((res) => res.json())
         .then((data) => {
@@ -45,7 +47,12 @@ export default function Onboarding() {
         .catch((err) => console.warn('Mid-quiz Hindi translation error:', err))
         .finally(() => setTranslatingHindi(false));
     }
-  }, [step, language, questions, hindiQuestions, translatingHindi, selectedGrade, selectedSubject, authFetch, includeWritten]);
+  }, [step, language, questions, hindiQuestions, translatingHindi, selectedGrade, selectedSubject, selectedSubSubject, authFetch, includeWritten]);
+
+  // Split subjects (English/Science/Social Science) require a sub-subject choice.
+  const subSubjectOptions = subSubjectsFor(selectedSubject);
+  const needsSubSubject = hasSubSubjects(selectedSubject);
+  const subSubjectReady = !needsSubSubject || !!selectedSubSubject;
 
   // Start Diagnostic Quiz
   const handleStartQuiz = async () => {
@@ -55,7 +62,7 @@ export default function Onboarding() {
     try {
       const res = await authFetch(`/diagnostic/generate?lang=${language}`, {
         method: 'POST',
-        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, language, includeWritten })
+        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, subSubject: selectedSubSubject, language, includeWritten })
       });
 
       const data = await res.json();
@@ -164,13 +171,31 @@ export default function Onboarding() {
                     key={s}
                     type="button"
                     className={`select-chip ${selectedSubject === s ? 'selected' : ''}`}
-                    onClick={() => setSelectedSubject(s)}
+                    onClick={() => { setSelectedSubject(s); setSelectedSubSubject(''); }}
                   >
                     {s}
                   </button>
                 ))}
               </div>
             </div>
+
+            {needsSubSubject && (
+              <div className="selection-group" style={{ marginTop: '1.5rem' }}>
+                <label>Select {selectedSubject} area</label>
+                <div className="chip-grid">
+                  {subSubjectOptions.map((ss) => (
+                    <button
+                      key={ss}
+                      type="button"
+                      className={`select-chip ${selectedSubSubject === ss ? 'selected' : ''}`}
+                      onClick={() => setSelectedSubSubject(ss)}
+                    >
+                      {getSubSubjectName(ss, language)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <label className="practice-written-toggle" style={{ marginTop: '1.5rem' }}>
               <input
@@ -184,11 +209,15 @@ export default function Onboarding() {
               </span>
             </label>
 
+            {needsSubSubject && !selectedSubSubject && (
+              <p className="quiz-hint" style={{ marginTop: '1rem' }}>Choose a {selectedSubject} area to continue.</p>
+            )}
+
             <button
               type="button"
               className="primary-button large onboarding-next-btn"
               onClick={handleStartQuiz}
-              disabled={loadingQuiz}
+              disabled={loadingQuiz || !subSubjectReady}
             >
               {loadingQuiz ? (
                 <>
@@ -208,7 +237,7 @@ export default function Onboarding() {
           <div className="onboarding-step">
             <div className="quiz-step-header">
               <span className="section-kicker">
-                Diagnostic Question {currentQIndex + 1} of {questions.length}
+                {selectedSubject}{selectedSubSubject ? ` · ${getSubSubjectName(selectedSubSubject, language)}` : ''} — Question {currentQIndex + 1} of {questions.length}
               </span>
               <span className="topic-badge">{currentQ.topic || selectedSubject}</span>
             </div>

@@ -50,3 +50,82 @@ export function isKnownGrade(g) {
   const n = normalizeGrade(g);
   return GRADES.some((x) => normalizeGrade(x) === n);
 }
+
+// ── Sub-subjects (Track: subject-splitting) ─────────────────────────────────
+// Three subjects split into selectable sub-subjects; the LAST entry of each is
+// the "spans all sub-tracks" option (English → Fusion; Science / Social Science
+// → Combined). Every OTHER subject stays flat (no sub-subjects). Keyed by the
+// canonical subject spelling. This EXTENDS the single source — it is not a fork.
+export const SUB_SUBJECTS = {
+  English: ['Writing', 'Grammar', 'Reading', 'Fusion'],
+  Science: ['Physics', 'Chemistry', 'Biology', 'Combined'],
+  'Social Science': ['Economics', 'Civics', 'Geography', 'History', 'Combined']
+};
+
+// The "spans all sub-tracks" sub-subject for each split subject.
+export const FUSION_SUBSUBJECT = {
+  English: 'Fusion',
+  Science: 'Combined',
+  'Social Science': 'Combined'
+};
+
+// Map an any-cased subject to its canonical spelling so SUB_SUBJECTS lookups are
+// casing-robust. Returns the input unchanged if not a known subject.
+export function canonicalSubject(subject) {
+  const n = normalizeSubject(subject);
+  return SUBJECTS.find((s) => normalizeSubject(s) === n) || subject;
+}
+
+export function normalizeSubSubject(ss) {
+  return (ss || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Does this subject split into sub-subjects (English / Science / Social Science)?
+export function hasSubSubjects(subject) {
+  return Object.prototype.hasOwnProperty.call(SUB_SUBJECTS, canonicalSubject(subject));
+}
+
+// Ordered sub-subject list for a subject (empty array for flat subjects).
+export function subSubjectsFor(subject) {
+  return SUB_SUBJECTS[canonicalSubject(subject)] || [];
+}
+
+// Is `ss` a valid sub-subject of `subject`?
+export function isKnownSubSubject(subject, ss) {
+  const n = normalizeSubSubject(ss);
+  return subSubjectsFor(subject).some((x) => normalizeSubSubject(x) === n);
+}
+
+// The Fusion/Combined "spans all" sub-subject for a split subject ('' if flat).
+export function fusionSubSubjectFor(subject) {
+  return FUSION_SUBSUBJECT[canonicalSubject(subject)] || '';
+}
+
+// Is (subject, ss) the Fusion/Combined "spans all sub-tracks" option?
+export function isFusionSubSubject(subject, ss) {
+  const f = fusionSubSubjectFor(subject);
+  return !!f && normalizeSubSubject(ss) === normalizeSubSubject(f);
+}
+
+// Written-heavy combos: English's Writing & Fusion (essay grading + auto written
+// questions). Everything else — including English Grammar/Reading — is NOT
+// written-heavy. Consumed by writtenStyleFor (Phase D) so being "English" no
+// longer implies essay treatment on its own.
+export function isWrittenHeavy(subject, subSubject) {
+  if (!isEnglish(subject)) return false;
+  const ss = normalizeSubSubject(subSubject);
+  return ss === 'writing' || ss === 'fusion';
+}
+
+// Natural-language scope phrase for Groq prompts, so generation is scoped to the
+// chosen sub-subject. Flat subject → the subject itself; Fusion/Combined → "all
+// areas"; a specific sub-subject → "specifically the X area".
+export function subjectScopeLabel(subject, subSubject) {
+  const canon = canonicalSubject(subject);
+  if (!subSubject || !hasSubSubjects(canon)) return canon;
+  if (isFusionSubSubject(canon, subSubject)) {
+    const parts = subSubjectsFor(canon).filter((x) => !isFusionSubSubject(canon, x));
+    return `${canon} (covering all areas: ${parts.join(', ')})`;
+  }
+  return `${canon} — specifically the "${subSubject}" area of ${canon}`;
+}

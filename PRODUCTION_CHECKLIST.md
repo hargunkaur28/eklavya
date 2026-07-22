@@ -140,3 +140,86 @@
       parent-invite by email), add a verification step. No PII/security
       dependency on email correctness today; don't build email flows on
       the assumption addresses are verified until this is done.
+
+### Track 4 — Phase 4.2 (subject-taxonomy REMODEL): DEFERRED, not built
+Phase 4.1 (cleanup) shipped — single source of truth (`server/src/config/taxonomy.js`
++ `client/src/data/taxonomy.js`), shared subject/grade normalizers, and two bug
+fixes (doubled "class Class 10" YouTube query; diagnostic weak/strong split now
+normalizes topics like the roadmap does). Phase 4.2 — the CONCEPTUAL remodel — was
+scoped and planned but **deliberately NOT built**. It's the highest-risk piece
+(touches the roadmap identity key + needs a data migration). Logged here for
+whoever picks it up. NOTHING in the current codebase has a `track` field.
+
+**The smell it addresses:** exam tracks JEE/NEET currently live in the same flat
+subject list as school subjects (Physics/Chemistry/…) and "Science" overlaps
+Physics/Chemistry/Biology — see the Phase 4.0 audit. JEE/NEET are not subjects,
+they're cross-subject exam tracks.
+
+- [ ] **Proposed model (strawman — NOT finalized):** add a `track` dimension
+      ∈ {School, JEE, NEET}; remove JEE/NEET from the subject list (they become
+      tracks). Subjects scoped per track: School → Science, Maths, Physics,
+      Chemistry, Biology, English, Hindi, Social Science; JEE → Physics,
+      Chemistry, Maths; NEET → Physics, Chemistry, Biology. A "Track optional /
+      School-default" variant was also floated (track shown only as an opt-in so
+      the common school path stays a 2-step onboarding). Neither was chosen.
+- [ ] **Course identity key change:** `{userId, grade, subject}` →
+      `{userId, grade, track, subject}`. Blast radius (from the 4.0 audit): the
+      archive-on-regen filter (`roadmap.js` ~537-540), `/roadmap/list` grouping,
+      the chat active-roadmap pick, and multi-subject switching all key on
+      `{grade, subject}` and would each need `track` added.
+- [ ] **Schema:** add `track: { type: String, default: 'School' }` to Roadmap,
+      DiagnosticSession, DiagnosticResult, PracticeSession (additive, no hard
+      enum — consistent with 4.1). Onboarding becomes 3-step (grade → track →
+      subject, subject options depending on track).
+- [ ] **MIGRATION — OPEN, NOT DECIDED.** Existing "JEE"/"NEET" roadmaps are today
+      monolithic single-value-subject roadmaps; the remodel wants per-subject
+      roadmaps within a track, so their migration is genuinely ambiguous. Three
+      options were discussed and NONE was chosen — must be revisited if this is
+      picked up:
+        1. **Grandfather** — RECOMMENDED default if/when built. Backfill adds
+           `track=JEE/NEET` but leaves `subject='JEE'/'NEET'` as a legacy value;
+           old roadmaps stay functional, new students get per-subject. Non-
+           destructive, reversible, no ambiguous mapping.
+        2. **Split into per-subject** — convert each monolithic roadmap into
+           per-subject ones. Destructive + ambiguous (one roadmap's days/progress
+           can't cleanly divide across Physics/Chem/Maths). Higher risk.
+        3. **Lazy, no script** — add `track` with a derived default, resolve
+           on-read; no backfill. Purely additive but the derivation logic scatters
+           across every key-use site (easy to miss one).
+      If a migration IS written, it must be non-destructive, idempotent (2nd run =
+      no change), dry-runnable, and reversible; and verification must prove an
+      existing JEE/NEET roadmap loads byte-identical (plus the added `track`) and
+      that regen archives only the same `{grade, track, subject}`.
+- [ ] **Also still open:** `topicResources.js` is dead code (no importers as of
+      4.1) — a candidate for deletion, left in place deliberately. And `courses.js`
+      (static 3-item catalog) is reachable from live roadmaps via
+      `day.resourceLink → /courses/:id`; any restructuring of its ids or of
+      `getResourceLinkForTopic` must preserve that deep-link (for FLAT subjects —
+      see the sub-subject note below).
+
+### Sub-subject splitting (English/Science/Social Science) — accepted limitations
+Shipped: English→Writing/Grammar/Reading/Fusion, Science→Physics/Chemistry/Biology/
+Combined, Social Science→Economics/Civics/Geography/History/Combined, each its own
+`{userId,grade,subject,subSubject}` course. This is SEPARATE from the deferred
+JEE/NEET "track" remodel above — do not conflate.
+- [ ] **Practice mode picker stays FLAT** — the practice setup screen has no
+      sub-subject selector (practice is free-text-topic driven). The backend
+      accepts an optional `subSubject` (defaults `''`), and English practice with
+      no sub-subject resolves to essay written-style via the legacy-safe
+      `writtenStyleFor('English','')` branch (verified). Add a sub-subject selector
+      to practice only if sub-subject-scoped practice sessions become a real want.
+- [ ] **Sub-subject scoping is prompt-enforced, not hard-constrained** — generation
+      is scoped by injecting `subjectScopeLabel()` into the Groq prompt (e.g. "the
+      Grammar area of English"). Groq overwhelmingly honours it, but like all Groq
+      generation it could occasionally drift; there is no post-generation validator
+      that a question is strictly in-scope. Same accepted-limitation class as
+      quiz-accuracy in general.
+- [ ] **Sub-subject roadmaps have NO static-course deep-link** — `getResourceLinkForTopic`
+      returns `null` when a `subSubject` is set (deliberate: the `courses.js` triad
+      is subject-level and would mis-link a Physics day to the general Science
+      course). So sub-subject roadmap days simply have no `day.resourceLink`. If a
+      per-sub-subject course catalog is ever built, wire it in here.
+- [ ] **Migration log is committed** (`server/src/scripts/backfill-subsubject.log.json`)
+      as the durable rollback record + audit trail of exactly which docs were
+      grandfathered. `--rollback` depends on it; a fresh clone must retain it to be
+      able to reverse the migration that already ran in production.
