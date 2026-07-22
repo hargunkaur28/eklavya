@@ -16,6 +16,7 @@ import activityRoutes from './routes/activity.js';
 import chatRoutes from './routes/chat.js';
 import adminRoutes from './routes/admin.js';
 import mentorRoutes from './routes/mentor.js';
+import notesRoutes from './routes/notes.js';
 import { parentPasswordChangeGate } from './middleware/auth.js';
 import { startTempAudioCleanup, stopTempAudioCleanup } from './utils/textToSpeech.js';
 
@@ -78,6 +79,8 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
 // Track 1: Mentor — persistent AI tutor chat (student-only; enforced in the router).
 app.use('/api/mentor', mentorRoutes);
+// Track 2: PDF Notes generator (student-only; ephemeral — no persistence).
+app.use('/api/notes', notesRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

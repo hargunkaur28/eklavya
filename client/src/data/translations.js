@@ -116,6 +116,25 @@ export const translations = {
       mentorConfirmDelete: 'Delete this conversation?',
       mentorError: 'Something went wrong. Please try again.',
       mentorSubtitle: 'Your personal AI tutor — ask anything, anytime.',
+      notesNav: 'Notes',
+      notesHeading: 'PDF Notes Generator',
+      notesSubtitle: 'Generate clean, downloadable study notes for any topic.',
+      notesSubjectLabel: 'Subject',
+      notesTopicLabel: 'Topic',
+      notesTopicPlaceholder: 'e.g. Photosynthesis',
+      notesGenerate: 'Generate Notes',
+      notesGenerating: 'Generating…',
+      notesRegenerate: 'Regenerate',
+      notesReviewHint: 'Review and edit before downloading:',
+      notesTitleLabel: 'Title',
+      notesPointsHint: 'One bullet point per line',
+      notesKeyTerms: 'Key Terms',
+      notesKeyTermsHint: 'One per line — “Term: definition”',
+      notesDownload: 'Download PDF',
+      notesDownloading: 'Preparing PDF…',
+      notesError: 'Could not generate notes. Please try again.',
+      notesNeedTopic: 'Enter a topic to generate notes.',
+      notesEnglishOnly: 'Note: study notes are currently generated in English.',
       navMenuLabel: 'Menu',
       subjectsLabel: 'Subjects',
       addSubject: 'Add subject',
@@ -157,6 +176,12 @@ export const translations = {
       question: (num) => `Question ${num}`,
       correct: 'Correct',
       incorrect: 'Incorrect',
+      // Track 3: written questions
+      writtenBadge: 'Written',
+      yourWrittenAnswer: 'Your answer',
+      reachedThreshold: 'Reached threshold',
+      belowThreshold: 'Below threshold',
+      thresholdLabel: 'threshold',
       yourAnswer: 'Your Answer',
       correctAnswer: 'Correct Answer',
       explanation: 'Explanation:',
@@ -209,7 +234,16 @@ export const translations = {
       yourAnswer: 'Your answer',
       correctAnswer: 'Correct answer',
       explanation: 'Explanation:',
-      notCounted: 'Practice is just for revision — it doesn’t affect your roadmap or progress.'
+      notCounted: 'Practice is just for revision — it doesn’t affect your roadmap or progress.',
+      // Track 3: written questions
+      includeWritten: 'Include written questions',
+      includeWrittenHint: 'Adds a couple of AI-graded short written-answer questions.',
+      writtenBadge: 'Written',
+      writtenPlaceholder: 'Type your answer…',
+      yourWrittenAnswer: 'Your answer',
+      reachedThreshold: 'Reached threshold',
+      belowThreshold: 'Below threshold',
+      thresholdLabel: 'threshold'
     },
 
     // Module Quiz (Phase 3)
@@ -240,7 +274,14 @@ export const translations = {
       lastResultHeading: 'Your last attempt',
       viewReview: 'View full review',
       backToSummary: 'Back',
-      attemptCountLabel: (n) => `${n} attempt${n === 1 ? '' : 's'}`
+      attemptCountLabel: (n) => `${n} attempt${n === 1 ? '' : 's'}`,
+      // Track 3: written questions
+      writtenBadge: 'Written',
+      writtenPlaceholder: 'Type your answer…',
+      yourWrittenAnswer: 'Your answer',
+      reachedThreshold: 'Reached threshold',
+      belowThreshold: 'Below threshold',
+      thresholdLabel: 'threshold'
     },
 
     // Diagnostic Review Page
@@ -255,7 +296,25 @@ export const translations = {
       topicStrengthBreakdown: 'Topic Strength Breakdown',
       detailedAnalysis: 'Question-by-Question Detailed Analysis',
       generatingRoadmap: 'Generating AI Study Roadmap...',
-      generateMyRoadmap: 'Generate My Study Roadmap'
+      generateMyRoadmap: 'Generate My Study Roadmap',
+      // Track 3: written questions
+      writtenBadge: 'Written',
+      yourWrittenAnswer: 'Your answer',
+      reachedThreshold: 'Reached threshold',
+      belowThreshold: 'Below threshold',
+      thresholdLabel: 'threshold'
+    },
+
+    // Track 3: shared written-answer review labels (used by WrittenReview across
+    // practice, module quiz, diagnostic review + dashboard). Kept in one place so
+    // the criterion labels aren't duplicated across four host namespaces.
+    written: {
+      content: 'Content',
+      grammar: 'Grammar',
+      spelling: 'Spelling',
+      overallLabel: 'Overall',
+      expectedPointsHeading: 'A strong answer covers',
+      feedbackEnglishNote: 'AI feedback is shown in English.'
     },
 
     // Hero
@@ -537,6 +596,25 @@ export const translations = {
       mentorConfirmDelete: 'इस बातचीत को हटाएं?',
       mentorError: 'कुछ गलत हो गया। कृपया फिर से प्रयास करें।',
       mentorSubtitle: 'आपका व्यक्तिगत AI ट्यूटर — कभी भी, कुछ भी पूछें।',
+      notesNav: 'नोट्स',
+      notesHeading: 'PDF नोट्स जनरेटर',
+      notesSubtitle: 'किसी भी विषय के लिए साफ़, डाउनलोड करने योग्य नोट्स बनाएं।',
+      notesSubjectLabel: 'विषय',
+      notesTopicLabel: 'टॉपिक',
+      notesTopicPlaceholder: 'उदा. प्रकाश संश्लेषण',
+      notesGenerate: 'नोट्स बनाएं',
+      notesGenerating: 'बनाया जा रहा है…',
+      notesRegenerate: 'फिर से बनाएं',
+      notesReviewHint: 'डाउनलोड करने से पहले समीक्षा करें और संपादित करें:',
+      notesTitleLabel: 'शीर्षक',
+      notesPointsHint: 'प्रति पंक्ति एक बुलेट पॉइंट',
+      notesKeyTerms: 'मुख्य शब्द',
+      notesKeyTermsHint: 'प्रति पंक्ति एक — “शब्द: परिभाषा”',
+      notesDownload: 'PDF डाउनलोड करें',
+      notesDownloading: 'PDF तैयार हो रहा है…',
+      notesError: 'नोट्स नहीं बन सके। कृपया फिर से प्रयास करें।',
+      notesNeedTopic: 'नोट्स बनाने के लिए एक टॉपिक दर्ज करें।',
+      notesEnglishOnly: 'ध्यान दें: अध्ययन नोट्स फ़िलहाल अंग्रेज़ी में बनाए जाते हैं।',
       navMenuLabel: 'मेनू',
       subjectsLabel: 'विषय',
       addSubject: 'विषय जोड़ें',
@@ -578,6 +656,12 @@ export const translations = {
       question: (num) => `प्रश्न ${num}`,
       correct: 'सही',
       incorrect: 'गलत',
+      // Track 3: written questions
+      writtenBadge: 'लिखित',
+      yourWrittenAnswer: 'आपका उत्तर',
+      reachedThreshold: 'सीमा तक पहुँच गए',
+      belowThreshold: 'सीमा से कम',
+      thresholdLabel: 'सीमा',
       yourAnswer: 'आपका उत्तर',
       correctAnswer: 'सही उत्तर',
       explanation: 'व्याख्या:',
@@ -630,7 +714,16 @@ export const translations = {
       yourAnswer: 'आपका उत्तर',
       correctAnswer: 'सही उत्तर',
       explanation: 'व्याख्या:',
-      notCounted: 'अभ्यास सिर्फ़ दोहराने के लिए है — यह आपके रोडमैप या प्रगति को प्रभावित नहीं करता।'
+      notCounted: 'अभ्यास सिर्फ़ दोहराने के लिए है — यह आपके रोडमैप या प्रगति को प्रभावित नहीं करता।',
+      // Track 3: written questions
+      includeWritten: 'लिखित प्रश्न शामिल करें',
+      includeWrittenHint: 'कुछ AI-जाँचे लघु-उत्तर लिखित प्रश्न जोड़ता है।',
+      writtenBadge: 'लिखित',
+      writtenPlaceholder: 'अपना उत्तर लिखें…',
+      yourWrittenAnswer: 'आपका उत्तर',
+      reachedThreshold: 'सीमा तक पहुँच गए',
+      belowThreshold: 'सीमा से कम',
+      thresholdLabel: 'सीमा'
     },
 
     // Module Quiz (Phase 3)
@@ -661,7 +754,14 @@ export const translations = {
       lastResultHeading: 'आपका पिछला प्रयास',
       viewReview: 'पूरी समीक्षा देखें',
       backToSummary: 'वापस',
-      attemptCountLabel: (n) => `${n} प्रयास`
+      attemptCountLabel: (n) => `${n} प्रयास`,
+      // Track 3: written questions
+      writtenBadge: 'लिखित',
+      writtenPlaceholder: 'अपना उत्तर लिखें…',
+      yourWrittenAnswer: 'आपका उत्तर',
+      reachedThreshold: 'सीमा तक पहुँच गए',
+      belowThreshold: 'सीमा से कम',
+      thresholdLabel: 'सीमा'
     },
 
     // Diagnostic Review Page
@@ -676,7 +776,23 @@ export const translations = {
       topicStrengthBreakdown: 'विषय क्षमता विश्लेषण',
       detailedAnalysis: 'प्रश्न-दर-प्रश्न विस्तृत विश्लेषण',
       generatingRoadmap: 'AI अध्ययन रोडमैप तैयार किया जा रहा है...',
-      generateMyRoadmap: 'मेरा अध्ययन रोडमैप तैयार करें'
+      generateMyRoadmap: 'मेरा अध्ययन रोडमैप तैयार करें',
+      // Track 3: written questions
+      writtenBadge: 'लिखित',
+      yourWrittenAnswer: 'आपका उत्तर',
+      reachedThreshold: 'सीमा तक पहुँच गए',
+      belowThreshold: 'सीमा से कम',
+      thresholdLabel: 'सीमा'
+    },
+
+    // Track 3: shared written-answer review labels
+    written: {
+      content: 'विषय-वस्तु',
+      grammar: 'व्याकरण',
+      spelling: 'वर्तनी',
+      overallLabel: 'कुल',
+      expectedPointsHeading: 'एक अच्छे उत्तर में शामिल है',
+      feedbackEnglishNote: 'AI प्रतिक्रिया अंग्रेज़ी में दिखाई गई है।'
     },
 
     // Hero

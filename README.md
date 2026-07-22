@@ -7,7 +7,7 @@
 
 ## Project Overview
 
-**Project Eklavya** (*Ek Shikshak, Har Vidhyarthi*) is a personalized, AI-driven learning platform built specifically for Indian students preparing for Class 10 Science, Class 11 JEE Foundation, and Class 12 NEET Biology. The platform assesses a student's current knowledge through an interactive diagnostic quiz, identifies strong and weak concept areas, and automatically constructs a day-by-day study roadmap. Each study day combines curated educational YouTube videos from trusted Indian channels (Physics Wallah, Vedantu, Unacademy, Khan Academy India, Aakash) with AI-generated lesson content and a per-day module quiz — a day is completed only once its video is watched and its quiz passed. Beyond the core roadmap, the dashboard tracks video and quiz progress, flags weak sub-topics from quiz results, adaptively inserts remediation days when a student stays stuck, supports multiple subjects per student, offers a standalone practice mode, and keeps students consistent with account-wide study streaks and a "continue where you left off" prompt. The platform features bilingual support (English and Hindi) across UI, quizzes, lessons, and weak-topic labels, voice input and text-to-speech read-aloud, and a floating site-wide AI assistant widget. It also has a role-based account system — students, an optional **read-only parent login** per student, and an environment-configured **admin console** — plus student profile editing with server-side Cloudinary photo uploads.
+**Project Eklavya** (*Ek Shikshak, Har Vidhyarthi*) is a personalized, AI-driven learning platform built specifically for Indian students preparing for Class 10 Science, Class 11 JEE Foundation, and Class 12 NEET Biology. The platform assesses a student's current knowledge through an interactive diagnostic quiz, identifies strong and weak concept areas, and automatically constructs a day-by-day study roadmap. Each study day combines curated educational YouTube videos from trusted Indian channels (Physics Wallah, Vedantu, Unacademy, Khan Academy India, Aakash) with AI-generated lesson content and a per-day module quiz — a day is completed only once its video is watched and its quiz passed. Beyond the core roadmap, the dashboard tracks video and quiz progress, flags weak sub-topics from quiz results, adaptively inserts remediation days when a student stays stuck, supports multiple subjects per student, offers a standalone practice mode, and keeps students consistent with account-wide study streaks and a "continue where you left off" prompt. The platform features bilingual support (English and Hindi) across UI, quizzes, lessons, and weak-topic labels, voice input and text-to-speech read-aloud, and a floating site-wide AI assistant widget. Quizzes can optionally include **AI-graded written (essay / short-answer) questions** alongside multiple-choice, a persistent **AI tutor chat (Mentor)**, and a **PDF study-notes generator**. It also has a role-based account system — students, an optional **read-only parent login** per student, and an environment-configured **admin console** — plus student profile editing with server-side Cloudinary photo uploads.
 
 ---
 
@@ -191,6 +191,27 @@
   - `server/src/routes/mentor.js`, `server/src/models/Conversation.js` (embedded messages), `server/src/utils/groqClient.js` (shared Groq call, now used by the chatbot too)
   - Student-only (`requireRole('student')`), per-user rate-limited, context capped to the last 20 messages / ~4000 tokens per request
 
+### 18. PDF Notes Generator
+- **What it does:** From the dashboard **Notes** section, a student enters a subject + topic; Groq generates **structured study notes** (a title, sections of explanatory bullet points with definitions/examples, and key terms), which the student can **edit in an inline review** and then **download as a branded PDF**. The PDF is rendered **server-side with `@react-pdf/renderer`** (pure Node, no headless browser — reliable on any host), carries the **vector Eklavya logo**, a header/footer, and page numbers, and is **streamed on-demand — ephemeral, never stored**. Sizes are clamped server-side on **both** the AI output and the edited input (plus Express's body limit as an outer cap). Student-only.
+- **Components/Pages:**
+  - `client/src/components/NotesGenerator.jsx` (inline dashboard panel: generate → editable review → download)
+- **Backend Routes & Utilities:**
+  - `POST /api/notes/generate` (structured notes JSON), `POST /api/notes/pdf` (renders + streams the download)
+  - `server/src/routes/notes.js`, `server/src/utils/notesPdf.js` (React-PDF document + ported vector logo)
+  - *Accepted limitation:* notes content is generated in **English** (react-pdf's built-in Helvetica); Hindi content needs a registered Devanagari font — logged in `PRODUCTION_CHECKLIST.md`. A Hindi-mode UI notice tells the student up front.
+
+### 19. Written / Essay Questions (AI-Graded)
+- **What it does:** Quizzes can include **written (essay / short-answer) questions** alongside multiple-choice, across all three quiz surfaces — the **diagnostic**, **module quizzes**, and **practice mode**. The student answers in a free-text box, and each answer is **graded by Groq on three criteria** — content, grammar, and spelling (each 0–100) — combined into a weighted overall score (essay-weighted `50/30/20` for English writing, content-weighted `80/10/10` for short answers). That overall is **binarised against the same threshold each quiz already uses** (70% module / 60% diagnostic / 60% practice), so a written question feeds **weak-topic aggregation and adaptive remediation identically to an MCQ** — its topic is pinned to the same canonical sub-topic list the MCQs use, so scores merge into the same buckets rather than drifting into singletons.
+- **How it's offered:** an **opt-in toggle** ("Include written questions") on the diagnostic and practice setup screens; **English module quizzes auto-include** essay questions (they're inherently writing-based). MCQ-only remains the default everywhere else — existing documents (no `type`) are treated as MCQ with zero migration.
+- **Review UX:** the post-submit and revisit review shows **per-criterion score bars + the AI's feedback per criterion**, the **overall vs. threshold**, and the **grading key** ("a strong answer covers…"). Below-threshold written answers are framed as **"Below threshold," never "Incorrect"** (with distinct amber, not red, styling) — a written answer isn't wrong, it's under-developed.
+- **Components/Pages:**
+  - `client/src/components/WrittenQuestion.jsx` (shared answer `textarea` + threshold-framed review with score bars/feedback, reused by practice, module quiz, diagnostic take + review, and the dashboard's embedded diagnostic review)
+- **Backend Routes & Utilities:**
+  - No new endpoints — the existing `diagnostic/practice/roadmap` generate + submit routes carry an `includeWritten` flag and mixed (MCQ + written) grading.
+  - `server/src/utils/generateWritten.js` (writes the questions + grading anchor), `server/src/utils/gradeWritten.js` (the 3-criterion grader — blank→zero without a Groq call, never throws, degrades to a 0-score with a note), `server/src/models/writtenFields.js` (additive schema fields shared across all five quiz/attempt sub-schemas; `writtenStyle` is snapshotted onto the attempt so an ephemeral-session diagnostic can still render it on revisit)
+  - Student-only, reuses the shared `groqClient.js` and the existing translation-cache path (written prompts translate via the prompt-only Sarvam path, since they have no options to keep order-stable)
+  - *Accepted limitations:* AI grading is **non-deterministic** (the same answer can score slightly differently run-to-run — an accepted trade-off); AI **feedback text is English** even in Hindi mode (criterion *labels* are translated, and a Hindi-mode note says so) — both logged in `PRODUCTION_CHECKLIST.md`.
+
 ---
 
 ## Tech Stack
@@ -200,6 +221,7 @@
 - **Routing:** `react-router-dom` 7.18.1
 - **Icons:** `lucide-react` 0.468.0
 - **Markdown:** `react-markdown` (renders the Mentor tutor's formatted replies)
+- **PDF (server-side):** `@react-pdf/renderer` (renders downloadable study-notes PDFs — pure Node, no headless browser)
 - **Animations:** `framer-motion` 12.42.2, `motion` 12.42.2, `gsap` 3.15.0, `ogl` 1.0.11 (3D WebGL visuals)
 - **Styling:** Vanilla CSS3 with root design tokens, Devanagari font overrides (`Noto Sans Devanagari`), and custom animations
 
@@ -230,7 +252,7 @@ project-eklavya/
 │   ├── public/                 # Static public assets (e.g. chatbot-avatar.png)
 │   ├── src/
 │   │   ├── assets/             # Component image assets
-│   │   ├── components/         # Reusable React components (Header, ChatWidget, SpeakerButton, RoadmapDashboard, DashboardSidebar, YouTubePlayer, ModuleQuiz, ProgressWeakTopics, PracticeMode, StreakWidget, ParentAccessCard, ParentDashboard, AdminDashboard, AdminSettings, DashboardShell, Avatar, etc.)
+│   │   ├── components/         # Reusable React components (Header, ChatWidget, SpeakerButton, RoadmapDashboard, DashboardSidebar, YouTubePlayer, ModuleQuiz, ProgressWeakTopics, PracticeMode, StreakWidget, ParentAccessCard, ParentDashboard, AdminDashboard, AdminSettings, DashboardShell, Avatar, NotesGenerator, WrittenQuestion, etc.)
 │   │   ├── context/            # React Context providers (AuthContext.jsx, LanguageContext.jsx)
 │   │   ├── data/               # Course catalog (courses.js) and translation dictionary (translations.js)
 │   │   ├── pages/              # Top-level page views (DiagnosticReview.jsx, DayDetail.jsx, AuthPage.jsx, ChangePasswordPage.jsx, ProfilePage.jsx, AdminLoginPage.jsx, MentorPage.jsx)
@@ -245,10 +267,10 @@ project-eklavya/
 │   ├── src/
 │   │   ├── data/               # Static route catalog (siteRoutes.js) & grounding knowledge (siteKnowledge.js)
 │   │   ├── middleware/         # Auth middleware (auth.js — authMiddleware, requireRole, parentPasswordChangeGate)
-│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession, AdminConfig, Conversation)
-│   │   ├── routes/             # Express API routes (auth.js, admin.js, mentor.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
+│   │   ├── models/             # Mongoose schemas (User, DiagnosticSession, DiagnosticResult, Roadmap, PracticeSession, AdminConfig, Conversation) + writtenFields.js (shared written-question schema fields)
+│   │   ├── routes/             # Express API routes (auth.js, admin.js, mentor.js, notes.js, diagnostic.js, roadmap.js, practice.js, activity.js, chat.js)
 │   │   ├── scripts/            # Database remediation and utility maintenance scripts
-│   │   ├── utils/              # Backend integrations & helpers (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js, validatePassword.js, rateLimiter.js, generateTempPassword.js, weakTopics.js, cloudinary.js, imageSniff.js, adminCreds.js, groqClient.js)
+│   │   ├── utils/              # Backend integrations & helpers (sarvamClient.js, localizeReply.js, fetchYoutubeResources.js, textToSpeech.js, translateAndCache.js, recordActivity.js, validatePassword.js, rateLimiter.js, generateTempPassword.js, weakTopics.js, cloudinary.js, imageSniff.js, adminCreds.js, groqClient.js, notesPdf.js, generateWritten.js, gradeWritten.js)
 │   │   └── server.js           # Server entry point, MongoDB connection, & graceful shutdown
 │   └── package.json            # Server dependencies and scripts
 │
@@ -304,6 +326,8 @@ project-eklavya/
 | `GET` | `/api/mentor/conversations/:id` | Yes (student) | Full message history (ownership-checked → 404) |
 | `POST` | `/api/mentor/conversations/:id/message` | Yes (student, rate limited) | Send a message, persist both turns, return the reply |
 | `DELETE` | `/api/mentor/conversations/:id` | Yes (student) | Delete a conversation (ownership-checked → 404) |
+| `POST` | `/api/notes/generate` | Yes (student) | Generate structured study notes (JSON) for a subject + topic |
+| `POST` | `/api/notes/pdf` | Yes (student) | Render the (edited) notes to a PDF and stream it as a download |
 | `POST` | `/api/chat/message` | Optional (Rate limited) | Process AI Chatbot query (intent detection, Q&A, navigation, video search, localization) |
 | `POST` | `/api/chat/tts` | Optional (Rate limited) | Synthesize base64 audio for chatbot response via Sarvam Bulbul v3 |
 | `POST` | `/api/chat/stt` | Optional (Rate limited) | Speech-to-text audio upload processing via Sarvam saaras v3 |

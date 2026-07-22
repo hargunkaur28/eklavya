@@ -5,6 +5,7 @@ import { translations } from '../data/translations.js';
 import { ClipboardCheck, CheckCircle2, XCircle, Loader2, RefreshCw, Sparkles, ArrowLeft } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
 import { getLocalDate } from '../utils/streak.js';
+import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestion.jsx';
 
 // Phase 3 + result-visibility fix: per-day module quiz. Questions are generated
 // + cached server-side; this component presents them, submits answers, shows the
@@ -59,12 +60,15 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
     }
   }, [authFetch, roadmapId, dayNumber, language]);
 
-  const allAnswered = questions.length > 0 && questions.every((_, i) => answers[i] !== undefined);
+  const allAnswered = questions.length > 0 && questions.every((q, i) =>
+    q.type === 'written' ? isWrittenAnswered(answers[i]) : answers[i] !== undefined);
 
   const submitQuiz = useCallback(async () => {
     if (!allAnswered) return;
     setStatus('submitting');
-    const payload = questions.map((_, i) => ({ selectedIndex: answers[i] }));
+    const payload = questions.map((q, i) => q.type === 'written'
+      ? { writtenAnswer: answers[i] }
+      : { selectedIndex: answers[i] });
     try {
       const res = await authFetch(`/roadmap/${roadmapId}/day/${dayNumber}/quiz/submit?lang=${language}`, {
         method: 'POST',
@@ -121,28 +125,45 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
       <h4 className="quiz-review-heading">{t.reviewHeading}</h4>
       <div className="quiz-questions">
         {data.questions.map((q, qi) => (
-          <div key={qi} className={`quiz-question reviewed ${q.isCorrect ? 'correct' : 'incorrect'}`}>
+          <div key={qi} className={`quiz-question reviewed ${q.type === 'written' ? (q.isCorrect ? 'correct' : 'below') : (q.isCorrect ? 'correct' : 'incorrect')}`}>
             <div className="quiz-q-row">
-              <h4 className="quiz-q-text">{q.questionText}</h4>
+              <h4 className="quiz-q-text">
+                {q.type === 'written' && <span className="quiz-written-badge">{t.writtenBadge}</span>}
+                {q.questionText}
+              </h4>
               <SpeakerButton audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/quiz/question/${qi}/audio?lang=${language}`} size={16} />
             </div>
-            <div className="quiz-options">
-              {q.options.map((opt, oi) => {
-                const isSel = q.selectedIndex === oi;
-                const isCorrect = q.correctIndex === oi;
-                let cls = 'quiz-review-opt';
-                if (isCorrect) cls += ' opt-correct';
-                else if (isSel && !q.isCorrect) cls += ' opt-wrong';
-                return (
-                  <div key={oi} className={cls}>
-                    <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
-                    <span>{opt}</span>
-                    {isSel && <span className="quiz-tag">{t.yourAnswer}</span>}
-                    {isCorrect && !q.isCorrect && <span className="quiz-tag correct">{t.correctAnswer}</span>}
-                  </div>
-                );
-              })}
-            </div>
+            {q.type === 'written' ? (
+              <WrittenReview
+                answer={q.writtenAnswer}
+                isCorrect={q.isCorrect}
+                overall={q.overall}
+                threshold={q.threshold}
+                scores={q.scores}
+                feedback={q.feedback}
+                expectedPoints={q.expectedPoints}
+                language={language}
+                labels={{ reached: t.reachedThreshold, below: t.belowThreshold, thresholdLabel: t.thresholdLabel, yourAnswer: t.yourWrittenAnswer }}
+              />
+            ) : (
+              <div className="quiz-options">
+                {q.options.map((opt, oi) => {
+                  const isSel = q.selectedIndex === oi;
+                  const isCorrect = q.correctIndex === oi;
+                  let cls = 'quiz-review-opt';
+                  if (isCorrect) cls += ' opt-correct';
+                  else if (isSel && !q.isCorrect) cls += ' opt-wrong';
+                  return (
+                    <div key={oi} className={cls}>
+                      <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
+                      <span>{opt}</span>
+                      {isSel && <span className="quiz-tag">{t.yourAnswer}</span>}
+                      {isCorrect && !q.isCorrect && <span className="quiz-tag correct">{t.correctAnswer}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {q.explanation && <p className="quiz-explanation"><strong>{t.explanation}</strong> {q.explanation}</p>}
           </div>
         ))}
@@ -228,19 +249,31 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
         <div className="quiz-questions">
           {questions.map((q, qi) => (
             <div key={qi} className="quiz-question">
-              <p className="quiz-q-number">{typeof t.questionOf === 'function' ? t.questionOf(qi + 1, questions.length) : `${qi + 1}`}</p>
+              <p className="quiz-q-number">
+                {typeof t.questionOf === 'function' ? t.questionOf(qi + 1, questions.length) : `${qi + 1}`}
+                {q.type === 'written' && <span className="quiz-written-badge">{t.writtenBadge}</span>}
+              </p>
               <div className="quiz-q-row">
                 <h4 className="quiz-q-text">{q.questionText}</h4>
                 <SpeakerButton audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/quiz/question/${qi}/audio?lang=${language}`} size={16} />
               </div>
-              <div className="quiz-options">
-                {q.options.map((opt, oi) => (
-                  <button key={oi} type="button" className={`quiz-option ${answers[qi] === oi ? 'selected' : ''}`} onClick={() => setAnswers((p) => ({ ...p, [qi]: oi }))}>
-                    <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
-                    <span>{opt}</span>
-                  </button>
-                ))}
-              </div>
+              {q.type === 'written' ? (
+                <WrittenInput
+                  value={answers[qi]}
+                  onChange={(val) => setAnswers((p) => ({ ...p, [qi]: val }))}
+                  placeholder={t.writtenPlaceholder}
+                  disabled={status === 'submitting'}
+                />
+              ) : (
+                <div className="quiz-options">
+                  {q.options.map((opt, oi) => (
+                    <button key={oi} type="button" className={`quiz-option ${answers[qi] === oi ? 'selected' : ''}`} onClick={() => setAnswers((p) => ({ ...p, [qi]: oi }))}>
+                      <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
+                      <span>{opt}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

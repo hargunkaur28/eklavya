@@ -97,3 +97,46 @@
       + generating Hindi content from Groq. The Notes UI strings are
       already bilingual; only the generated PDF *content* is English-only
       for now. Accepted limitation — add the font asset to enable Hindi.
+- [ ] Richer, exam-ready notes — the generated notes are currently
+      solid-but-basic (definitions + examples per point, key terms).
+      Later, deepen them for exam prep: worked examples, common
+      mistakes/misconceptions, diagrams/tables where relevant,
+      previous-year-question style callouts, and per-section summaries.
+      Would likely need a longer/structured Groq prompt + a richer PDF
+      template (and possibly multi-pass generation).
+- [ ] "Export Mentor chat → Notes" — let a student turn a Mentor
+      conversation into a downloadable PDF note (feed the thread through
+      the notes-structuring + PDF pipeline). Clean follow-on that reuses
+      Track 1 (Mentor) + Track 2 (notes/PDF); not built now.
+
+### Track 3 — Written / Essay Questions: accepted limitations
+- [ ] AI feedback text is ENGLISH even in Hindi mode. Written answers are
+      graded by Groq, and the per-criterion feedback strings
+      (content/grammar/spelling) are generated in English; only the
+      criterion LABELS are translated, and a Hindi-mode note tells the
+      student the feedback itself is in English. Same shape as the
+      notes-Devanagari gap. To fully localize, generate the feedback in
+      the target language (or translate it post-grade) — deferred.
+- [ ] Written grading is NON-DETERMINISTIC — the same answer can score
+      slightly differently run-to-run (LLM grading). Accepted trade-off,
+      NOT a bug: the review UI frames below-threshold as "Below threshold"
+      (never "Incorrect") precisely because the score is a judgement, not
+      a hard key. If this ever needs to feel more stable, options are a
+      lower grading temperature (already 0.2), or averaging N grade passes
+      (cost trade-off). Do not present written scores as exact/appealable.
+- [ ] Written questions each translate via a SEPARATE prompt-only Sarvam
+      call (MCQs batch into one). Under flaky network / rate limits this
+      makes partial-Hindi more likely for written than MCQ — one question
+      can show English while another shows Hindi. It self-heals (failed
+      translations aren't cached; retried on next Hindi read) and never
+      affects scoring, but if it becomes common, batch the written prompts
+      into one call or add per-question retry-with-backoff.
+
+### Auth — flagged for later
+- [ ] No email verification on signup — accounts are usable immediately
+      with any (even fake) email. Fine for now (no email-dependent
+      features, password reset is admin/temp-password based), but before
+      any email-gated feature (self-serve password reset, notifications,
+      parent-invite by email), add a verification step. No PII/security
+      dependency on email correctness today; don't build email flows on
+      the assumption addresses are verified until this is done.

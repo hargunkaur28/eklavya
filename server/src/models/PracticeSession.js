@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { writtenQuestionFields } from './writtenFields.js';
 
 // Phase 6: a practice-mode quiz session. Mirrors DiagnosticSession — holds the
 // generated questions (with answers) between /generate and /submit, with a 24h
@@ -7,15 +8,16 @@ import mongoose from 'mongoose';
 // weak-topic aggregation Phase 7 consumes.
 const practiceQuestionSchema = new mongoose.Schema({
   questionText: { type: String, required: true },
-  options: [{ type: String, required: true }],
-  correctIndex: { type: Number, required: true },
+  options: [{ type: String }],
+  correctIndex: { type: Number }, // MCQ-only; enforced at the generation layer (validators)
   topic: { type: String, default: 'General' },
   explanation: { type: String, default: '' },
   // Cached Hindi (options translated in the same order — correctIndex untouched)
   translatedHindiQuestionText: { type: String, default: '' },
   translatedHindiOptions: { type: [String], default: [] },
   translatedHindiExplanation: { type: String, default: '' },
-  hindiTranslated: { type: Boolean, default: false }
+  hindiTranslated: { type: Boolean, default: false },
+  ...writtenQuestionFields
 }, { _id: false });
 
 const practiceSessionSchema = new mongoose.Schema({

@@ -1,12 +1,16 @@
 import express from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
 import PracticeSession from '../models/PracticeSession.js';
-import { translateQuestionsArray } from '../utils/translateAndCache.js';
+import { translateQuestionsArray, translateTextWithSarvam } from '../utils/translateAndCache.js';
 import { recordStudyActivity } from '../utils/recordActivity.js';
+import { gradeWritten } from '../utils/gradeWritten.js';
+import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 
 const router = express.Router();
 
 const PRACTICE_QUESTIONS = 10;
+const PRACTICE_WRITTEN_COUNT = 2;       // written questions mixed in when opted-in
+const PRACTICE_WRITTEN_THRESHOLD = 60;  // low-stakes revision → lenient pass bar
 
 // Phase 6: practice quizzes are generated FRESH per session (no per-topic cache),
 // with a high temperature + a rotation seed so the same topic yields a different
@@ -64,32 +68,59 @@ function validatePracticeQuizJSON(data) {
 }
 
 // Localize a practice session's questions to Hindi (cached on the session).
+// MCQ questions use the option-order-preserving path (translateQuestionsArray).
+// Written questions use a DISTINCT branch — they have no options/index to keep
+// order-stable, so we translate ONLY the prompt (Track 3). Grading feedback stays
+// in English for now (flagged as a follow-on, like the notes-PDF Devanagari case).
 async function ensurePracticeHindi(session) {
-  const pending = session.questions.filter(q => !q.hindiTranslated);
-  if (pending.length === 0) return false;
-
-  const translated = await translateQuestionsArray(
-    pending.map(q => ({ questionText: q.questionText, options: q.options, explanation: q.explanation }))
-  );
+  const pendingAll = session.questions.filter(q => !q.hindiTranslated);
+  if (pendingAll.length === 0) return false;
 
   let changed = false;
-  pending.forEach((q, i) => {
-    const tr = translated[i];
-    if (tr && tr.questionText && tr.questionText.trim() !== q.questionText.trim()) {
-      q.translatedHindiQuestionText = tr.questionText;
-      q.translatedHindiOptions = (tr.options && tr.options.length === q.options.length) ? tr.options : q.options;
-      q.translatedHindiExplanation = tr.explanation || q.explanation || '';
+
+  const mcq = pendingAll.filter(q => q.type !== 'written');
+  if (mcq.length) {
+    const translated = await translateQuestionsArray(
+      mcq.map(q => ({ questionText: q.questionText, options: q.options, explanation: q.explanation }))
+    );
+    mcq.forEach((q, i) => {
+      const tr = translated[i];
+      if (tr && tr.questionText && tr.questionText.trim() !== q.questionText.trim()) {
+        q.translatedHindiQuestionText = tr.questionText;
+        q.translatedHindiOptions = (tr.options && tr.options.length === q.options.length) ? tr.options : q.options;
+        q.translatedHindiExplanation = tr.explanation || q.explanation || '';
+        q.hindiTranslated = true;
+        changed = true;
+      }
+    });
+  }
+
+  for (const q of pendingAll.filter(q => q.type === 'written')) {
+    const tp = await translateTextWithSarvam(q.questionText);
+    if (tp && tp.trim() !== q.questionText.trim()) {
+      q.translatedHindiQuestionText = tp;
       q.hindiTranslated = true;
       changed = true;
     }
-  });
+  }
+
   return changed;
 }
 
 function serializePracticeQuestion(q, idx, isHindi) {
+  if (q.type === 'written') {
+    return {
+      index: idx,
+      type: 'written',
+      writtenStyle: q.writtenStyle,
+      questionText: (isHindi && q.translatedHindiQuestionText) ? q.translatedHindiQuestionText : q.questionText,
+      topic: q.topic
+    };
+  }
   const useHi = isHindi && q.hindiTranslated;
   return {
     index: idx,
+    type: 'mcq',
     questionText: useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText,
     options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
     topic: q.topic
@@ -121,18 +152,30 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       return res.status(200).json({ available: false, reason: 'generation_failed' });
     }
 
+    // Track 3: opt-in written questions (the toggle is wired in Phase 3.3).
+    // Generate a couple of written questions and swap them in for MCQs so the
+    // total stays PRACTICE_QUESTIONS. Falls back to MCQ-only if generation fails.
+    const includeWritten = req.body.includeWritten === true;
+    let writtenQs = [];
+    if (includeWritten) {
+      writtenQs = await generateWritten(grade, subject, topic, PRACTICE_WRITTEN_COUNT, writtenStyleFor(subject));
+    }
+    const mcqCount = PRACTICE_QUESTIONS - writtenQs.length;
+    const mcqQs = quizData.questions.slice(0, mcqCount).map(q => ({
+      type: 'mcq',
+      questionText: q.question,
+      options: q.options,
+      correctIndex: q.correctIndex,
+      topic: topic,
+      explanation: q.explanation || ''
+    }));
+
     const session = await PracticeSession.create({
       userId: req.userId,
       grade: grade || '',
       subject,
       topic,
-      questions: quizData.questions.slice(0, PRACTICE_QUESTIONS).map(q => ({
-        questionText: q.question,
-        options: q.options,
-        correctIndex: q.correctIndex,
-        topic: topic,
-        explanation: q.explanation || ''
-      }))
+      questions: [...mcqQs, ...writtenQs]
     });
 
     if (isHindi) {
@@ -169,15 +212,41 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
       return res.status(410).json({ error: 'Practice session expired or invalid. Please generate a new one.' });
     }
 
-    let score = 0;
-    const review = session.questions.map((q, idx) => {
+    // Mixed scoring: MCQ = index compare; written = AI-graded, binarised against
+    // the practice threshold (grading is async, so this maps to promises).
+    const review = await Promise.all(session.questions.map(async (q, idx) => {
+      if (q.type === 'written') {
+        const ans = answers[idx];
+        const studentAnswer = (ans && typeof ans.writtenAnswer === 'string')
+          ? ans.writtenAnswer
+          : (typeof ans === 'string' ? ans : '');
+        const graded = await gradeWritten({
+          questionText: q.questionText,
+          expectedPoints: q.expectedPoints,
+          studentAnswer,
+          style: q.writtenStyle
+        });
+        return {
+          type: 'written',
+          questionText: (isHindi && q.translatedHindiQuestionText) ? q.translatedHindiQuestionText : q.questionText,
+          writtenStyle: q.writtenStyle,
+          writtenAnswer: studentAnswer,
+          expectedPoints: q.expectedPoints,
+          scores: { content: graded.content, grammar: graded.grammar, spelling: graded.spelling },
+          overall: graded.overall,
+          feedback: graded.feedback,
+          isCorrect: graded.overall >= PRACTICE_WRITTEN_THRESHOLD, // "reached threshold", not "right/wrong"
+          threshold: PRACTICE_WRITTEN_THRESHOLD
+        };
+      }
+
       const selectedIndex = (answers[idx] && typeof answers[idx].selectedIndex === 'number')
         ? answers[idx].selectedIndex
         : (typeof answers[idx] === 'number' ? answers[idx] : -1);
       const isCorrect = selectedIndex === q.correctIndex;
-      if (isCorrect) score += 1;
       const useHi = isHindi && q.hindiTranslated;
       return {
+        type: 'mcq',
         questionText: useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText,
         options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
         selectedIndex,
@@ -185,7 +254,9 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
         isCorrect,
         explanation: useHi ? (q.translatedHindiExplanation || q.explanation || '') : (q.explanation || '')
       };
-    });
+    }));
+
+    const score = review.filter(r => r.isCorrect).length;
 
     session.used = true;
     await session.save();

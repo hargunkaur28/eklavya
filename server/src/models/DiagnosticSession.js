@@ -1,10 +1,12 @@
 import mongoose from 'mongoose';
+import { writtenQuestionFields } from './writtenFields.js';
 
 const sessionQuestionSchema = new mongoose.Schema({
   questionText: { type: String, required: true },
-  options: [{ type: String, required: true }],
-  correctIndex: { type: Number, required: true },
-  topic: { type: String, default: 'General' }
+  options: [{ type: String }],
+  correctIndex: { type: Number }, // MCQ-only; enforced at the generation layer (validators)
+  topic: { type: String, default: 'General' },
+  ...writtenQuestionFields
 }, { _id: false });
 
 const diagnosticSessionSchema = new mongoose.Schema({

@@ -13,6 +13,8 @@ import PracticeMode from './PracticeMode.jsx';
 import SubjectRings from './SubjectRings.jsx';
 import DashboardStatCards from './DashboardStatCards.jsx';
 import ParentAccessCard from './ParentAccessCard.jsx';
+import NotesGenerator from './NotesGenerator.jsx';
+import { WrittenReview } from './WrittenQuestion.jsx';
 
 export default function RoadmapDashboard() {
   const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
@@ -348,6 +350,9 @@ export default function RoadmapDashboard() {
           </div>
         )}
 
+        {/* NOTES — Track 2: PDF notes generator */}
+        {activeSection === 'notes' && <NotesGenerator />}
+
         {/* PRACTICE MODE — Phase 6 */}
         {activeSection === 'practice' && (
           <PracticeMode roadmaps={roadmaps} defaultRoadmap={activeRoadmap} />
@@ -406,49 +411,74 @@ export default function RoadmapDashboard() {
                       const displayOptions = useHindi && hindiQ.options && hindiQ.options.length > 0 ? hindiQ.options : q.options;
                       const displayExp = useHindi && hindiQ.explanation ? hindiQ.explanation : q.explanation;
 
+                      const isWritten = q.type === 'written';
+
                       return (
                         <div
                           key={idx}
-                          className={`review-question-card ${q.isCorrect ? 'correct' : 'incorrect'}`}
+                          className={`review-question-card ${isWritten ? (q.isCorrect ? 'correct' : 'below') : (q.isCorrect ? 'correct' : 'incorrect')}`}
                         >
                           <div className="q-review-top">
                             <span className="q-number-pill">{typeof t.question === 'function' ? t.question(idx + 1) : `Question ${idx + 1}`}</span>
-                            <span className={`q-status-badge ${q.isCorrect ? 'correct' : 'incorrect'}`}>
-                              {q.isCorrect ? (
-                                <><CheckCircle2 size={14} /> {t.correct}</>
-                              ) : (
-                                <><XCircle size={14} /> {t.incorrect}</>
-                              )}
-                            </span>
+                            {isWritten ? (
+                              <span className={`q-status-badge ${q.isCorrect ? 'correct' : 'below'}`}>
+                                {q.isCorrect ? t.reachedThreshold : t.belowThreshold}
+                              </span>
+                            ) : (
+                              <span className={`q-status-badge ${q.isCorrect ? 'correct' : 'incorrect'}`}>
+                                {q.isCorrect ? (
+                                  <><CheckCircle2 size={14} /> {t.correct}</>
+                                ) : (
+                                  <><XCircle size={14} /> {t.incorrect}</>
+                                )}
+                              </span>
+                            )}
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem' }}>
-                            <h4 style={{ margin: 0 }}>{displayStem}</h4>
+                            <h4 style={{ margin: 0 }}>
+                              {isWritten && <span className="quiz-written-badge">{t.writtenBadge}</span>}
+                              {displayStem}
+                            </h4>
                             <SpeakerButton
                               audioEndpoint={`/diagnostic/${diagnosticData._id}/question/${idx}/audio?lang=${language}`}
                               size={16}
                             />
                           </div>
 
-                          <div className="q-options-review">
-                            {displayOptions.map((optStr, optIdx) => {
-                              const isUserChoice = q.selectedIndex === optIdx;
-                              const isCorrectChoice = q.correctIndex === optIdx;
-                              let optClass = 'opt-neutral';
-                              if (isUserChoice && q.isCorrect) optClass = 'opt-correct';
-                              if (isUserChoice && !q.isCorrect) optClass = 'opt-wrong';
-                              if (!q.isCorrect && isCorrectChoice) optClass = 'opt-correct-answer';
+                          {isWritten ? (
+                            <WrittenReview
+                              answer={q.writtenAnswer}
+                              isCorrect={q.isCorrect}
+                              overall={q.writtenOverall}
+                              scores={q.writtenScores}
+                              feedback={q.writtenFeedback}
+                              expectedPoints={q.expectedPoints}
+                              language={language}
+                              showStatus={false}
+                              labels={{ reached: t.reachedThreshold, below: t.belowThreshold, thresholdLabel: t.thresholdLabel, yourAnswer: t.yourWrittenAnswer }}
+                            />
+                          ) : (
+                            <div className="q-options-review">
+                              {(displayOptions || []).map((optStr, optIdx) => {
+                                const isUserChoice = q.selectedIndex === optIdx;
+                                const isCorrectChoice = q.correctIndex === optIdx;
+                                let optClass = 'opt-neutral';
+                                if (isUserChoice && q.isCorrect) optClass = 'opt-correct';
+                                if (isUserChoice && !q.isCorrect) optClass = 'opt-wrong';
+                                if (!q.isCorrect && isCorrectChoice) optClass = 'opt-correct-answer';
 
-                              return (
-                                <div key={optIdx} className={`review-opt-pill ${optClass}`}>
-                                  <span className="opt-index">{String.fromCharCode(65 + optIdx)}</span>
-                                  <span className="opt-text">{optStr}</span>
-                                  {isUserChoice && <span className="tag-user">{t.yourAnswer}</span>}
-                                  {isCorrectChoice && !q.isCorrect && <span className="tag-correct">{t.correctAnswer}</span>}
-                                </div>
-                              );
-                            })}
-                          </div>
+                                return (
+                                  <div key={optIdx} className={`review-opt-pill ${optClass}`}>
+                                    <span className="opt-index">{String.fromCharCode(65 + optIdx)}</span>
+                                    <span className="opt-text">{optStr}</span>
+                                    {isUserChoice && <span className="tag-user">{t.yourAnswer}</span>}
+                                    {isCorrectChoice && !q.isCorrect && <span className="tag-correct">{t.correctAnswer}</span>}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
 
                           {displayExp && (
                             <div className="q-explanation-box">

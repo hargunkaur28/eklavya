@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { writtenQuestionFields, writtenAttemptFields } from './writtenFields.js';
 
 const resourceSchema = new mongoose.Schema({
   title: { type: String, required: true },
@@ -22,7 +23,7 @@ const videoProgressSchema = new mongoose.Schema({
 const moduleQuizQuestionSchema = new mongoose.Schema({
   questionText: { type: String, required: true },
   options: [{ type: String }],
-  correctIndex: { type: Number, required: true },
+  correctIndex: { type: Number }, // MCQ-only; enforced at the generation layer (validators)
   topic: { type: String, default: 'General' },
   explanation: { type: String, default: '' },
   // Localization + TTS cache (mirrors day-content translatedHindi*/audio* fields).
@@ -32,7 +33,8 @@ const moduleQuizQuestionSchema = new mongoose.Schema({
   translatedHindiExplanation: { type: String, default: '' },
   hindiTranslated: { type: Boolean, default: false },
   audioQuestionEn: { type: String, default: '' },
-  audioQuestionHi: { type: String, default: '' }
+  audioQuestionHi: { type: String, default: '' },
+  ...writtenQuestionFields
 }, { _id: false });
 
 // Phase 3: per-question record of a student's attempt (the wrong-answer detail
@@ -41,9 +43,10 @@ const quizAttemptQuestionSchema = new mongoose.Schema({
   questionText: { type: String, required: true },
   options: [{ type: String }],
   selectedIndex: { type: Number, default: -1 },
-  correctIndex: { type: Number, required: true },
+  correctIndex: { type: Number }, // MCQ-only; enforced at the submit layer
   isCorrect: { type: Boolean, default: false },
-  topic: { type: String, default: 'General' }
+  topic: { type: String, default: 'General' },
+  ...writtenAttemptFields
 }, { _id: false });
 
 const daySchema = new mongoose.Schema({

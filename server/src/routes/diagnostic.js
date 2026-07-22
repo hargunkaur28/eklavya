@@ -4,8 +4,42 @@ import DiagnosticResult from '../models/DiagnosticResult.js';
 import DiagnosticSession from '../models/DiagnosticSession.js';
 import { translateQuestionsArray, translateTextWithSarvam } from '../utils/translateAndCache.js';
 import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash } from '../utils/textToSpeech.js';
+import { gradeWritten } from '../utils/gradeWritten.js';
+import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 
 const router = express.Router();
+
+// Track 3: opt-in written questions in the diagnostic (per-session, since a
+// diagnostic is a fresh session — unlike the cached module quiz). Binarised at
+// 60% (the diagnostic bar) so a written miss feeds the weak/strong split exactly
+// like a wrong MCQ.
+const DIAGNOSTIC_WRITTEN_COUNT = 2;
+const DIAGNOSTIC_WRITTEN_THRESHOLD = 60;
+
+// Translate a MIXED question array (MCQ + written) to Hindi, index-aligned.
+// MCQ uses the option-order-preserving path; written has no options, so it uses
+// the prompt-only Sarvam path (same split as practice.js). Feedback stays English.
+async function translateDiagnosticQuestions(questions) {
+  const mcqPayload = [];
+  const mcqSlot = questions.map(q => {
+    if (q.type === 'written') return -1;
+    mcqPayload.push({ questionText: q.questionText, options: q.options, explanation: q.explanation || '' });
+    return mcqPayload.length - 1;
+  });
+  const translatedMcq = mcqPayload.length ? await translateQuestionsArray(mcqPayload) : [];
+
+  const out = new Array(questions.length);
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    if (q.type === 'written') {
+      const tp = await translateTextWithSarvam(q.questionText);
+      out[i] = { questionText: (tp && tp.trim()) ? tp : q.questionText, options: [] };
+    } else {
+      out[i] = translatedMcq[mcqSlot[i]] || { questionText: q.questionText, options: q.options };
+    }
+  }
+  return out;
+}
 
 // Hand-written quiz question banks for exact matches
 const handWrittenQuizzes = {
@@ -182,12 +216,35 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       }
     }
 
-    const sessionQuestions = rawQuestions.map(q => ({
+    const mcqQuestions = rawQuestions.map(q => ({
+      type: 'mcq',
       questionText: q.questionText || q.question,
       options: q.options,
       correctIndex: q.correctIndex,
       topic: q.topic || 'General'
     }));
+
+    // Track 3: opt-in written questions. Pass the MCQ topic labels as the canonical
+    // list so written questions tag FROM those labels (verbatim) — they merge into
+    // the same topic buckets as MCQs in the weak/strong split instead of creating
+    // drift singletons that could over-weight the roadmap from one data point.
+    const includeWritten = req.body.includeWritten === true;
+    let writtenQuestions = [];
+    if (includeWritten) {
+      const mcqTopics = [...new Set(mcqQuestions.map(q => q.topic).filter(Boolean))];
+      const written = await generateWritten(
+        grade, subject, subject, DIAGNOSTIC_WRITTEN_COUNT, writtenStyleFor(subject), mcqTopics
+      );
+      writtenQuestions = written.map(w => ({
+        type: 'written',
+        questionText: w.questionText,
+        topic: w.topic || 'General',
+        expectedPoints: w.expectedPoints,
+        writtenStyle: w.writtenStyle
+      }));
+    }
+
+    const sessionQuestions = [...mcqQuestions, ...writtenQuestions];
 
     const session = await DiagnosticSession.create({
       userId: req.userId,
@@ -196,16 +253,13 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       questions: sessionQuestions
     });
 
-    const clientQuestions = sessionQuestions.map(q => ({
-      question: q.questionText,
-      questionText: q.questionText,
-      options: q.options,
-      topic: q.topic
-    }));
+    const clientQuestions = sessionQuestions.map(q => q.type === 'written'
+      ? { type: 'written', question: q.questionText, questionText: q.questionText, writtenStyle: q.writtenStyle, topic: q.topic }
+      : { type: 'mcq', question: q.questionText, questionText: q.questionText, options: q.options, topic: q.topic });
 
     let translatedHindiQuestions = [];
     if (isHindiRequested) {
-      translatedHindiQuestions = await translateQuestionsArray(sessionQuestions);
+      translatedHindiQuestions = await translateDiagnosticQuestions(sessionQuestions);
     }
 
     res.json({
@@ -242,46 +296,73 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
     let finalGrade = grade || session.grade;
     let finalSubject = subject || session.subject;
 
-    let score = 0;
-    const topicStats = {};
-
-    const fullQuestions = answers.map((ans, idx) => {
-      const sq = session.questions[idx];
-      if (!sq) {
-        throw new Error(`Question session mismatch at index ${idx}`);
-      }
-
-      const questionText = sq.questionText;
-      const options = sq.options;
-      const correctIndex = sq.correctIndex;
-      const userSelected = ans.selectedIndex !== undefined ? ans.selectedIndex : 0;
+    // Track 3: mixed grading. MCQ = index compare (sync); written = AI-graded
+    // (async), binarised at the 60% diagnostic bar. We AWAIT ALL gradings to
+    // resolve BEFORE computing score, per-topic stats, and the weak/strong split —
+    // because the roadmap is later generated FROM that split, an ungraded written
+    // question leaking into the split would silently corrupt the whole roadmap.
+    // This is the highest-stakes seam in the diagnostic path.
+    const fullQuestions = await Promise.all(session.questions.map(async (sq, idx) => {
+      const ans = answers[idx] || {};
       const topic = sq.topic || 'General';
 
-      const isCorrect = userSelected === correctIndex;
-      if (isCorrect) score += 1;
-
-      if (!topicStats[topic]) {
-        topicStats[topic] = { correct: 0, total: 0 };
+      if (sq.type === 'written') {
+        const studentAnswer = (ans && typeof ans.writtenAnswer === 'string')
+          ? ans.writtenAnswer
+          : (typeof ans === 'string' ? ans : '');
+        const graded = await gradeWritten({
+          questionText: sq.questionText,
+          expectedPoints: sq.expectedPoints,
+          studentAnswer,
+          style: sq.writtenStyle
+        });
+        return {
+          type: 'written',
+          questionText: sq.questionText,
+          topic,
+          isCorrect: graded.overall >= DIAGNOSTIC_WRITTEN_THRESHOLD,
+          writtenAnswer: studentAnswer,
+          writtenStyle: sq.writtenStyle,
+          writtenScores: { content: graded.content, grammar: graded.grammar, spelling: graded.spelling },
+          writtenOverall: graded.overall,
+          writtenFeedback: graded.feedback,
+          expectedPoints: sq.expectedPoints || [],
+          explanation: ''
+        };
       }
-      topicStats[topic].total += 1;
-      if (isCorrect) topicStats[topic].correct += 1;
 
+      const userSelected = ans.selectedIndex !== undefined ? ans.selectedIndex : 0;
       return {
-        questionText,
-        options,
+        type: 'mcq',
+        questionText: sq.questionText,
+        options: sq.options,
         selectedIndex: userSelected,
-        correctIndex,
-        isCorrect,
+        correctIndex: sq.correctIndex,
+        isCorrect: userSelected === sq.correctIndex,
         topic,
         explanation: ''
       };
-    });
+    }));
 
-    const explanations = await callGroqForExplanations(fullQuestions);
-    fullQuestions.forEach((fq, idx) => {
-      fq.explanation = (explanations && explanations[idx])
-        ? explanations[idx]
-        : `The correct answer is Option ${String.fromCharCode(65 + fq.correctIndex)}: "${fq.options[fq.correctIndex]}".`;
+    // Every grading above is resolved — now it is safe to compute score + split.
+    let score = 0;
+    const topicStats = {};
+    for (const fq of fullQuestions) {
+      if (fq.isCorrect) score += 1;
+      if (!topicStats[fq.topic]) topicStats[fq.topic] = { correct: 0, total: 0 };
+      topicStats[fq.topic].total += 1;
+      if (fq.isCorrect) topicStats[fq.topic].correct += 1;
+    }
+
+    // Explanations are MCQ-only (written questions carry AI feedback instead).
+    // Filtering avoids callGroqForExplanations dereferencing options[correctIndex]
+    // on a written question. References are shared, so this mutates fullQuestions.
+    const mcqOnly = fullQuestions.filter(q => q.type !== 'written');
+    const explanations = await callGroqForExplanations(mcqOnly);
+    mcqOnly.forEach((mq, i) => {
+      mq.explanation = (explanations && explanations[i])
+        ? explanations[i]
+        : `The correct answer is Option ${String.fromCharCode(65 + mq.correctIndex)}: "${mq.options[mq.correctIndex]}".`;
     });
 
     const weakTopics = [];
@@ -333,7 +414,7 @@ router.post('/:id/translate', authMiddleware, requireRole('student'), async (req
       return res.json(result);
     }
 
-    const translatedQs = await translateQuestionsArray(result.questions);
+    const translatedQs = await translateDiagnosticQuestions(result.questions);
     const translatedRec = await translateTextWithSarvam(result.recommendation);
 
     result.translatedHindiQuestions = translatedQs;
@@ -412,11 +493,14 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
       : null;
 
     const stem = (isHindi && hindiQ?.questionText) ? hindiQ.questionText : q.questionText;
-    const options = (isHindi && hindiQ?.options && hindiQ.options.length > 0) ? hindiQ.options : q.options;
+    // Written questions have no options — read only the prompt (guard the .map).
+    const options = (isHindi && hindiQ?.options && hindiQ.options.length > 0) ? hindiQ.options : (q.options || []);
 
     const optLabels = ['A', 'B', 'C', 'D'];
     const optionsStr = options.map((opt, i) => `${isHindi ? 'विकल्प' : 'Option'} ${optLabels[i] || (i + 1)}: ${opt}`).join('. ');
-    const textToSpeak = `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}. ${optionsStr}.`;
+    const textToSpeak = optionsStr
+      ? `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}. ${optionsStr}.`
+      : `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}.`;
 
     const textHash = generateContentHash(textToSpeak);
     const filename = `diag-${id}-q${idx}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;

@@ -6,6 +6,7 @@ import { formatGradeSubjectDash } from '../utils/subjectTranslations.js';
 import { Dumbbell, Loader2, RefreshCw, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
 import { getLocalDate } from '../utils/streak.js';
+import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestion.jsx';
 
 // Phase 6: practice mode. Generates a FRESH quiz per session (variety, no cache),
 // separate from the roadmap — it never marks days complete and never writes to
@@ -28,6 +29,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
   const [answers, setAnswers] = useState({});
   const [sessionId, setSessionId] = useState(null);
   const [result, setResult] = useState(null);
+  const [includeWritten, setIncludeWritten] = useState(false); // Track 3: opt-in
 
   const selected = subjects.find((s) => s.id === roadmapId) || subjects[0];
 
@@ -52,7 +54,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
     try {
       const res = await authFetch(`/practice/generate?lang=${language}`, {
         method: 'POST',
-        body: JSON.stringify({ grade: selected.grade, subject: selected.subject, topic: finalTopic })
+        body: JSON.stringify({ grade: selected.grade, subject: selected.subject, topic: finalTopic, includeWritten })
       });
       const data = await res.json();
       if (!res.ok || data.available === false) { setPhase('unavailable'); return; }
@@ -62,14 +64,19 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
     } catch {
       setPhase('unavailable');
     }
-  }, [authFetch, topic, selected, language]);
+  }, [authFetch, topic, selected, language, includeWritten]);
 
-  const allAnswered = questions.length > 0 && questions.every((_, i) => answers[i] !== undefined);
+  // A written question counts as answered when its text box is non-empty; an MCQ
+  // when an option index is set.
+  const allAnswered = questions.length > 0 && questions.every((q, i) =>
+    q.type === 'written' ? isWrittenAnswered(answers[i]) : answers[i] !== undefined);
 
   const submit = useCallback(async () => {
     if (!allAnswered) return;
     setPhase('submitting');
-    const payload = questions.map((_, i) => ({ selectedIndex: answers[i] }));
+    const payload = questions.map((q, i) => q.type === 'written'
+      ? { writtenAnswer: answers[i] }
+      : { selectedIndex: answers[i] });
     try {
       const res = await authFetch(`/practice/submit?lang=${language}`, {
         method: 'POST',
@@ -113,6 +120,18 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
               onChange={(e) => setTopic(e.target.value)}
               placeholder={t.topicPlaceholder}
             />
+          </label>
+
+          <label className="practice-written-toggle">
+            <input
+              type="checkbox"
+              checked={includeWritten}
+              onChange={(e) => setIncludeWritten(e.target.checked)}
+            />
+            <span>
+              <strong>{t.includeWritten}</strong>
+              <small>{t.includeWrittenHint}</small>
+            </span>
           </label>
 
           {weakTopics.length > 0 && (
@@ -163,24 +182,36 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
         <div className="quiz-questions">
           {questions.map((q, qi) => (
             <div key={qi} className="quiz-question">
-              <p className="quiz-q-number">{t.questionOf(qi + 1, questions.length)}</p>
+              <p className="quiz-q-number">
+                {t.questionOf(qi + 1, questions.length)}
+                {q.type === 'written' && <span className="quiz-written-badge">{t.writtenBadge}</span>}
+              </p>
               <div className="quiz-q-row">
                 <h4 className="quiz-q-text">{q.questionText}</h4>
-                <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options, language }} size={16} />
+                <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options || [], language }} size={16} />
               </div>
-              <div className="quiz-options">
-                {q.options.map((opt, oi) => (
-                  <button
-                    key={oi}
-                    type="button"
-                    className={`quiz-option ${answers[qi] === oi ? 'selected' : ''}`}
-                    onClick={() => setAnswers((p) => ({ ...p, [qi]: oi }))}
-                  >
-                    <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
-                    <span>{opt}</span>
-                  </button>
-                ))}
-              </div>
+              {q.type === 'written' ? (
+                <WrittenInput
+                  value={answers[qi]}
+                  onChange={(val) => setAnswers((p) => ({ ...p, [qi]: val }))}
+                  placeholder={t.writtenPlaceholder}
+                  disabled={phase === 'submitting'}
+                />
+              ) : (
+                <div className="quiz-options">
+                  {q.options.map((opt, oi) => (
+                    <button
+                      key={oi}
+                      type="button"
+                      className={`quiz-option ${answers[qi] === oi ? 'selected' : ''}`}
+                      onClick={() => setAnswers((p) => ({ ...p, [qi]: oi }))}
+                    >
+                      <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
+                      <span>{opt}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -211,28 +242,45 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
       <h4 className="quiz-review-heading">{t.reviewHeading}</h4>
       <div className="quiz-questions">
         {result.questions.map((q, qi) => (
-          <div key={qi} className={`quiz-question reviewed ${q.isCorrect ? 'correct' : 'incorrect'}`}>
+          <div key={qi} className={`quiz-question reviewed ${q.type === 'written' ? (q.isCorrect ? 'correct' : 'below') : (q.isCorrect ? 'correct' : 'incorrect')}`}>
             <div className="quiz-q-row">
-              <h4 className="quiz-q-text">{q.questionText}</h4>
-              <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options, language }} size={16} />
+              <h4 className="quiz-q-text">
+                {q.type === 'written' && <span className="quiz-written-badge">{t.writtenBadge}</span>}
+                {q.questionText}
+              </h4>
+              <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options || [], language }} size={16} />
             </div>
-            <div className="quiz-options">
-              {q.options.map((opt, oi) => {
-                const isSel = q.selectedIndex === oi;
-                const isCorrect = q.correctIndex === oi;
-                let cls = 'quiz-review-opt';
-                if (isCorrect) cls += ' opt-correct';
-                else if (isSel && !q.isCorrect) cls += ' opt-wrong';
-                return (
-                  <div key={oi} className={cls}>
-                    <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
-                    <span>{opt}</span>
-                    {isSel && <span className="quiz-tag">{t.yourAnswer}</span>}
-                    {isCorrect && !q.isCorrect && <span className="quiz-tag correct">{t.correctAnswer}</span>}
-                  </div>
-                );
-              })}
-            </div>
+            {q.type === 'written' ? (
+              <WrittenReview
+                answer={q.writtenAnswer}
+                isCorrect={q.isCorrect}
+                overall={q.overall}
+                threshold={q.threshold}
+                scores={q.scores}
+                feedback={q.feedback}
+                expectedPoints={q.expectedPoints}
+                language={language}
+                labels={{ reached: t.reachedThreshold, below: t.belowThreshold, thresholdLabel: t.thresholdLabel, yourAnswer: t.yourWrittenAnswer }}
+              />
+            ) : (
+              <div className="quiz-options">
+                {q.options.map((opt, oi) => {
+                  const isSel = q.selectedIndex === oi;
+                  const isCorrect = q.correctIndex === oi;
+                  let cls = 'quiz-review-opt';
+                  if (isCorrect) cls += ' opt-correct';
+                  else if (isSel && !q.isCorrect) cls += ' opt-wrong';
+                  return (
+                    <div key={oi} className={cls}>
+                      <span className="quiz-opt-letter">{String.fromCharCode(65 + oi)}</span>
+                      <span>{opt}</span>
+                      {isSel && <span className="quiz-tag">{t.yourAnswer}</span>}
+                      {isCorrect && !q.isCorrect && <span className="quiz-tag correct">{t.correctAnswer}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {q.explanation && <p className="quiz-explanation"><strong>{t.explanation}</strong> {q.explanation}</p>}
           </div>
         ))}

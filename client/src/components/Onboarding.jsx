@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
+import { WrittenInput, isWrittenAnswered } from './WrittenQuestion.jsx';
 
 const GRADELIST = [
   'Nursery', 'KG', 'Class 1', 'Class 2', 'Class 3', 'Class 4',
@@ -28,6 +29,7 @@ export default function Onboarding() {
   const [error, setError] = useState('');
   const [loadingQuiz, setLoadingQuiz] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [includeWritten, setIncludeWritten] = useState(false); // Track 3: opt-in written
 
   const [translatingHindi, setTranslatingHindi] = useState(false);
 
@@ -41,7 +43,7 @@ export default function Onboarding() {
       setTranslatingHindi(true);
       authFetch(`/diagnostic/generate?lang=hi`, {
         method: 'POST',
-        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, language: 'hi' })
+        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, language: 'hi', includeWritten })
       })
         .then((res) => res.json())
         .then((data) => {
@@ -52,7 +54,7 @@ export default function Onboarding() {
         .catch((err) => console.warn('Mid-quiz Hindi translation error:', err))
         .finally(() => setTranslatingHindi(false));
     }
-  }, [step, language, questions, hindiQuestions, translatingHindi, selectedGrade, selectedSubject, authFetch]);
+  }, [step, language, questions, hindiQuestions, translatingHindi, selectedGrade, selectedSubject, authFetch, includeWritten]);
 
   // Start Diagnostic Quiz
   const handleStartQuiz = async () => {
@@ -62,7 +64,7 @@ export default function Onboarding() {
     try {
       const res = await authFetch(`/diagnostic/generate?lang=${language}`, {
         method: 'POST',
-        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, language })
+        body: JSON.stringify({ grade: selectedGrade, subject: selectedSubject, language, includeWritten })
       });
 
       const data = await res.json();
@@ -86,12 +88,18 @@ export default function Onboarding() {
     setSubmitting(true);
 
     try {
-      const formattedAnswers = questions.map((q, idx) => ({
-        questionText: q.questionText || q.question,
-        options: q.options,
-        topic: q.topic,
-        selectedIndex: answers[idx] !== undefined ? answers[idx] : 0
-      }));
+      const formattedAnswers = questions.map((q, idx) => q.type === 'written'
+        ? {
+            questionText: q.questionText || q.question,
+            topic: q.topic,
+            writtenAnswer: typeof answers[idx] === 'string' ? answers[idx] : ''
+          }
+        : {
+            questionText: q.questionText || q.question,
+            options: q.options,
+            topic: q.topic,
+            selectedIndex: answers[idx] !== undefined ? answers[idx] : 0
+          });
 
       const submitRes = await authFetch('/diagnostic/submit', {
         method: 'POST',
@@ -123,6 +131,10 @@ export default function Onboarding() {
     ? (currentHindiQ?.questionText || currentHindiQ?.question)
     : (currentQ?.questionText || currentQ?.question || '');
   const displayOptions = (language === 'hi' && currentHindiQ?.options?.length === 4) ? currentHindiQ.options : currentQ?.options;
+  const isWritten = currentQ?.type === 'written';
+  const currentAnswered = isWritten
+    ? isWrittenAnswered(answers[currentQIndex])
+    : answers[currentQIndex] !== undefined;
 
   return (
     <div className="onboarding-page">
@@ -169,6 +181,18 @@ export default function Onboarding() {
               </div>
             </div>
 
+            <label className="practice-written-toggle" style={{ marginTop: '1.5rem' }}>
+              <input
+                type="checkbox"
+                checked={includeWritten}
+                onChange={(e) => setIncludeWritten(e.target.checked)}
+              />
+              <span>
+                <strong>Include written questions</strong>
+                <small>Adds a couple of AI-graded short written-answer questions.</small>
+              </span>
+            </label>
+
             <button
               type="button"
               className="primary-button large onboarding-next-btn"
@@ -214,23 +238,32 @@ export default function Onboarding() {
               />
             </div>
 
-            <div className="quiz-options-stack">
-              {displayOptions.map((opt, optIdx) => {
-                const isSelected = answers[currentQIndex] === optIdx;
-                return (
-                  <button
-                    key={optIdx}
-                    type="button"
-                    className={`quiz-option-btn ${isSelected ? 'selected' : ''}`}
-                    onClick={() => setAnswers({ ...answers, [currentQIndex]: optIdx })}
-                  >
-                    <span className="option-letter">{String.fromCharCode(65 + optIdx)}</span>
-                    <span className="option-text">{opt}</span>
-                    {isSelected && <CheckCircle2 size={18} className="option-check" />}
-                  </button>
-                );
-              })}
-            </div>
+            {isWritten ? (
+              <WrittenInput
+                value={answers[currentQIndex]}
+                onChange={(val) => setAnswers({ ...answers, [currentQIndex]: val })}
+                placeholder="Type your answer…"
+                disabled={submitting}
+              />
+            ) : (
+              <div className="quiz-options-stack">
+                {(displayOptions || []).map((opt, optIdx) => {
+                  const isSelected = answers[currentQIndex] === optIdx;
+                  return (
+                    <button
+                      key={optIdx}
+                      type="button"
+                      className={`quiz-option-btn ${isSelected ? 'selected' : ''}`}
+                      onClick={() => setAnswers({ ...answers, [currentQIndex]: optIdx })}
+                    >
+                      <span className="option-letter">{String.fromCharCode(65 + optIdx)}</span>
+                      <span className="option-text">{opt}</span>
+                      {isSelected && <CheckCircle2 size={18} className="option-check" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="quiz-nav-row">
               <button
@@ -246,7 +279,7 @@ export default function Onboarding() {
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={answers[currentQIndex] === undefined || submitting}
+                  disabled={!currentAnswered || submitting}
                   onClick={() => setCurrentQIndex(currentQIndex + 1)}
                 >
                   Next Question
@@ -255,7 +288,7 @@ export default function Onboarding() {
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={answers[currentQIndex] === undefined || submitting}
+                  disabled={!currentAnswered || submitting}
                   onClick={handleSubmitQuiz}
                 >
                   {submitting ? (

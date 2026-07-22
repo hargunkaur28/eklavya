@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
-import { BookOpen, Dumbbell, TrendingUp, Trophy, Settings } from 'lucide-react';
+import { BookOpen, Dumbbell, TrendingUp, Trophy, Settings, FileText } from 'lucide-react';
 
 // Dashboard navigation rail with a PillNav-style hover effect (adapted from
 // React Bits' PillNav to our section-switching + our cream/green palette).
@@ -13,6 +13,8 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
     { key: 'practice', label: t.practiceMode, Icon: Dumbbell },
     { key: 'progress', label: t.progressWeakTopics, Icon: TrendingUp },
     { key: 'review', label: t.diagnosticReview, Icon: Trophy },
+    // Track 2: PDF Notes generator (inline dashboard section).
+    { key: 'notes', label: t.notesNav, Icon: FileText },
     // Track 1: Mentor uses the ChatWidget avatar; selecting it routes to /mentor.
     { key: 'mentor', label: t.mentor, img: '/chatbot-avatar.png' },
     { key: 'settings', label: t.settings, Icon: Settings }

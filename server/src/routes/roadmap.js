@@ -7,6 +7,13 @@ import { translateTextWithSarvam, translateQuestionsArray } from '../utils/trans
 import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash, getAudioUrl } from '../utils/textToSpeech.js';
 import { recordStudyActivity } from '../utils/recordActivity.js';
 import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN_QUESTIONS } from '../utils/weakTopics.js';
+import { gradeWritten } from '../utils/gradeWritten.js';
+import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
+
+// Track 3: module quizzes include written questions for English subjects (essay-
+// based by nature); other subjects stay MCQ-only. A written answer "passes" at the
+// same 70% module-quiz bar (QUIZ_PASS_THRESHOLD), binarised into the existing score.
+const MODULE_WRITTEN_COUNT = 2;
 
 const router = express.Router();
 
@@ -181,32 +188,58 @@ async function ensureQuizHindi(day) {
   const pending = questions.filter(q => !q.hindiTranslated);
   if (pending.length === 0) return false;
 
-  const translated = await translateQuestionsArray(
-    pending.map(q => ({ questionText: q.questionText, options: q.options, explanation: q.explanation }))
-  );
-
   let changed = false;
-  pending.forEach((q, i) => {
-    const tr = translated[i];
-    // Only latch as translated if the stem actually became Hindi. If the service
-    // failed (returned the English unchanged), leave hindiTranslated=false so the
-    // next Hindi read retries instead of caching the failure forever.
-    if (tr && tr.questionText && tr.questionText.trim() !== q.questionText.trim()) {
-      q.translatedHindiQuestionText = tr.questionText;
-      q.translatedHindiOptions = (tr.options && tr.options.length === q.options.length) ? tr.options : q.options;
-      q.translatedHindiExplanation = tr.explanation || q.explanation || '';
+
+  // MCQ: option-order-preserving path (correctIndex stays valid).
+  const mcq = pending.filter(q => q.type !== 'written');
+  if (mcq.length) {
+    const translated = await translateQuestionsArray(
+      mcq.map(q => ({ questionText: q.questionText, options: q.options, explanation: q.explanation }))
+    );
+    mcq.forEach((q, i) => {
+      const tr = translated[i];
+      // Only latch as translated if the stem actually became Hindi. If the service
+      // failed (returned the English unchanged), leave hindiTranslated=false so the
+      // next Hindi read retries instead of caching the failure forever.
+      if (tr && tr.questionText && tr.questionText.trim() !== q.questionText.trim()) {
+        q.translatedHindiQuestionText = tr.questionText;
+        q.translatedHindiOptions = (tr.options && tr.options.length === q.options.length) ? tr.options : q.options;
+        q.translatedHindiExplanation = tr.explanation || q.explanation || '';
+        q.hindiTranslated = true;
+        changed = true;
+      }
+    });
+  }
+
+  // Track 3: written questions have no options/index — distinct branch translating
+  // ONLY the prompt (never through the option-order helper).
+  for (const q of pending.filter(q => q.type === 'written')) {
+    const tp = await translateTextWithSarvam(q.questionText);
+    if (tp && tp.trim() !== q.questionText.trim()) {
+      q.translatedHindiQuestionText = tp;
       q.hindiTranslated = true;
       changed = true;
     }
-  });
+  }
+
   return changed;
 }
 
-// Client-safe question view (no correctIndex/explanation), localized if Hindi.
+// Client-safe question view (no correctIndex/explanation/expectedPoints), localized.
 function serializeQuizQuestion(q, idx, isHindi) {
+  if (q.type === 'written') {
+    return {
+      index: idx,
+      type: 'written',
+      writtenStyle: q.writtenStyle,
+      questionText: (isHindi && q.translatedHindiQuestionText) ? q.translatedHindiQuestionText : q.questionText,
+      topic: q.topic
+    };
+  }
   const useHi = isHindi && q.hindiTranslated;
   return {
     index: idx,
+    type: 'mcq',
     questionText: useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText,
     options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
     topic: q.topic
@@ -239,7 +272,13 @@ function canonicalizeSubtopics(rawSubtopics, questions) {
       options: q.options,
       correctIndex: q.correctIndex,
       topic: canonical,
-      explanation: q.explanation || ''
+      explanation: q.explanation || '',
+      // Track 3: carry written-question fields through canonicalization so a
+      // written question's topic is pinned to a canonical sub-topic EXACTLY like
+      // an MCQ's — which is what lets weakTopics.js + remediation treat it the same.
+      type: q.type || 'mcq',
+      expectedPoints: q.expectedPoints || [],
+      writtenStyle: q.writtenStyle || 'short'
     };
   });
 
@@ -814,7 +853,25 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
         topic: q.topic || 'General',
         explanation: q.explanation || ''
       }));
-      // Phase 4: pin question topics to the canonical per-day sub-topic list.
+
+      // Track 3: for English, swap a couple of MCQs for written questions. They're
+      // generated with topics from the day's own sub-topics so canonicalization
+      // pins them to the SAME canonical labels as the MCQs (→ identical weak-topic
+      // aggregation + remediation targeting).
+      if (writtenStyleFor(roadmap.subject) === 'essay') {
+        // Pass the MCQ's canonical sub-topic list so written questions tag from the
+        // SAME labels (not free-generated) — minimizes the synonym-drift that would
+        // otherwise split written topics into their own weak-topic buckets.
+        const written = await generateWritten(
+          roadmap.grade, roadmap.subject, day.topic, MODULE_WRITTEN_COUNT, 'essay', quizData.subtopics
+        );
+        if (written.length) {
+          built.splice(built.length - written.length, written.length, ...written);
+        }
+      }
+
+      // Phase 4: pin question topics to the canonical per-day sub-topic list
+      // (type-agnostic — MCQ and written alike).
       const { subtopics, questions: canonQuestions } = canonicalizeSubtopics(quizData.subtopics, built);
       day.subtopics = subtopics;
       day.moduleQuiz = { generated: true, generatedAt: new Date(), questions: canonQuestions };
@@ -884,14 +941,43 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, requireRole('stud
       return res.status(409).json({ error: 'No quiz has been generated for this day yet.' });
     }
 
-    let score = 0;
-    const resultQuestions = quizQuestions.map((q, idx) => {
+    // Mixed scoring: MCQ = index compare; written = AI-graded, binarised at the SAME
+    // 70% module bar. Written grading is async, so this awaits ALL of them before
+    // score/pass/weak-topics are computed. Every result carries a canonical `topic`
+    // + `isCorrect`, so weakTopics.js aggregation + remediation treat written and
+    // MCQ identically. expectedPoints is snapshotted from the graded question.
+    const resultQuestions = await Promise.all(quizQuestions.map(async (q, idx) => {
+      if (q.type === 'written') {
+        const ans = answers[idx];
+        const studentAnswer = (ans && typeof ans.writtenAnswer === 'string')
+          ? ans.writtenAnswer
+          : (typeof ans === 'string' ? ans : '');
+        const graded = await gradeWritten({
+          questionText: q.questionText,
+          expectedPoints: q.expectedPoints,
+          studentAnswer,
+          style: q.writtenStyle
+        });
+        return {
+          type: 'written',
+          questionText: q.questionText,
+          topic: q.topic || 'General',
+          isCorrect: graded.overall >= QUIZ_PASS_THRESHOLD * 100,
+          writtenAnswer: studentAnswer,
+          writtenStyle: q.writtenStyle,
+          writtenScores: { content: graded.content, grammar: graded.grammar, spelling: graded.spelling },
+          writtenOverall: graded.overall,
+          writtenFeedback: graded.feedback,
+          expectedPoints: q.expectedPoints || []
+        };
+      }
+
       const selectedIndex = (answers[idx] && typeof answers[idx].selectedIndex === 'number')
         ? answers[idx].selectedIndex
         : (typeof answers[idx] === 'number' ? answers[idx] : -1);
       const isCorrect = selectedIndex === q.correctIndex;
-      if (isCorrect) score += 1;
       return {
+        type: 'mcq',
         questionText: q.questionText,
         options: q.options,
         selectedIndex,
@@ -899,8 +985,9 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, requireRole('stud
         isCorrect,
         topic: q.topic || 'General'
       };
-    });
+    }));
 
+    const score = resultQuestions.filter(r => r.isCorrect).length;
     const total = quizQuestions.length;
     const passed = total > 0 && (score / total) >= QUIZ_PASS_THRESHOLD;
     const prevCount = day.moduleQuizAttempt?.attemptCount || 0;
@@ -950,13 +1037,30 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, requireRole('stud
       remediationInserted: remediation, // { dayNumber, topic, subtopic } or null
       // Full review (with correct answers + explanations) is fine post-submit.
       questions: quizQuestions.map((q, idx) => {
+        const r = resultQuestions[idx];
+        if (q.type === 'written') {
+          return {
+            type: 'written',
+            questionText: (isHindi && q.translatedHindiQuestionText) ? q.translatedHindiQuestionText : q.questionText,
+            topic: q.topic || 'General',
+            writtenStyle: q.writtenStyle,
+            writtenAnswer: r.writtenAnswer,
+            scores: r.writtenScores,
+            overall: r.writtenOverall,
+            feedback: r.writtenFeedback,
+            expectedPoints: r.expectedPoints,
+            isCorrect: r.isCorrect,             // "reached threshold" — the UI frames it as such
+            threshold: Math.round(QUIZ_PASS_THRESHOLD * 100)
+          };
+        }
         const useHi = isHindi && q.hindiTranslated;
         return {
+          type: 'mcq',
           questionText: useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText,
           options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
-          selectedIndex: resultQuestions[idx].selectedIndex,
+          selectedIndex: r.selectedIndex,
           correctIndex: q.correctIndex,
-          isCorrect: resultQuestions[idx].isCorrect,
+          isCorrect: r.isCorrect,
           topic: q.topic || 'General',
           explanation: useHi ? (q.translatedHindiExplanation || q.explanation || '') : (q.explanation || '')
         };
@@ -995,8 +1099,24 @@ router.get('/:id/day/:dayNumber/quiz/result', authMiddleware, async (req, res) =
     const quizQs = day.moduleQuiz?.questions || [];
     const questions = (attempt.questions || []).map((aq, idx) => {
       const mq = quizQs[idx];
+      if (aq.type === 'written') {
+        return {
+          type: 'written',
+          questionText: (isHindi && mq?.translatedHindiQuestionText) ? mq.translatedHindiQuestionText : (mq?.questionText || aq.questionText),
+          topic: aq.topic,
+          writtenStyle: aq.writtenStyle,
+          writtenAnswer: aq.writtenAnswer,
+          scores: aq.writtenScores,
+          overall: aq.writtenOverall,
+          feedback: aq.writtenFeedback,
+          expectedPoints: aq.expectedPoints,
+          isCorrect: aq.isCorrect,
+          threshold: Math.round((attempt.passThreshold || QUIZ_PASS_THRESHOLD) * 100)
+        };
+      }
       const useHi = isHindi && mq?.hindiTranslated;
       return {
+        type: 'mcq',
         questionText: useHi ? (mq.translatedHindiQuestionText || mq.questionText) : (mq?.questionText || aq.questionText),
         options: (useHi && mq?.translatedHindiOptions?.length === (mq?.options || []).length) ? mq.translatedHindiOptions : (mq?.options || aq.options),
         selectedIndex: aq.selectedIndex,
