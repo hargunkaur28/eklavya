@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Navigate } from 'react-router-dom';
-import { Plus, Send, Trash2, MessageSquare, Loader2, Mic, MicOff } from 'lucide-react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { Plus, Send, Trash2, MessageSquare, Loader2, Mic, MicOff, ArrowLeft } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
@@ -36,6 +36,7 @@ function AssistantContent({ content, animate, onTick, onComplete }) {
 // left = conversation list, right = message thread. Single-shot request pattern
 // (matching ChatWidget — POST then render the full reply), student-only.
 export default function MentorPage() {
+  const navigate = useNavigate();
   const { user, authFetch, activeRoadmap } = useAuth();
   const { language } = useLanguage();
   const t = translations[language]?.dashboard || translations.en.dashboard;
@@ -231,11 +232,22 @@ export default function MentorPage() {
       {/* Right: message thread */}
       <section className="mentor-thread">
         <header className="mentor-thread-head">
-          {avatar('mentor-head-avatar')}
-          <div>
-            <h2>{t.mentor}</h2>
-            <p>{t.mentorSubtitle}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {avatar('mentor-head-avatar')}
+            <div>
+              <h2>{t.mentor}</h2>
+              <p>{t.mentorSubtitle}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            className="mentor-back-btn"
+            onClick={() => navigate('/dashboard')}
+            title={language === 'hi' ? 'डैशबोर्ड पर वापस जाएं' : 'Back to Dashboard'}
+          >
+            <ArrowLeft size={16} />
+            <span>{language === 'hi' ? 'डैशबोर्ड' : 'Back to Dashboard'}</span>
+          </button>
         </header>
 
         <div className="mentor-messages" ref={scrollRef}>

@@ -4,12 +4,15 @@ import EklavyaLogo from './EklavyaLogo';
 import Avatar from './Avatar.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 
 export default function Header({ mobileOpen, setMobileOpen }) {
   const { t, language, toggleLanguage } = useLanguage();
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const activeIndex = (location.pathname === '/' || location.pathname === '') ? 0 : -1;
 
   const navItems = [
     { label: t('nav.home'), href: '#' },
@@ -33,7 +36,7 @@ export default function Header({ mobileOpen, setMobileOpen }) {
         <EklavyaLogo />
       </Link>
       <div className="desktop-nav-wrapper">
-        <GooeyNav items={navItems} />
+        <GooeyNav items={navItems} initialActiveIndex={activeIndex} />
       </div>
       <div className="header-actions">
         <button
@@ -48,7 +51,10 @@ export default function Header({ mobileOpen, setMobileOpen }) {
 
         {user ? (
           <>
-            <button className="ghost-button" onClick={() => navigate(user.role === 'admin' ? '/admin' : '/dashboard')}>
+            <button
+              className={`ghost-button ${location.pathname === '/dashboard' || location.pathname === '/admin' ? 'active-nav-btn' : ''}`}
+              onClick={() => navigate(user.role === 'admin' ? '/admin' : '/dashboard')}
+            >
               <LayoutDashboard size={16} /> {t('header.dashboard')}
             </button>
             {/* Phase 7: the badge opens account settings for students (parents are

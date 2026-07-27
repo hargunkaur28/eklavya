@@ -37,7 +37,20 @@ export function buildFailedLoginAlertEmail({ account, role = 'Super Admin', atte
 <body>
   <div class="email-card">
     <div class="header">
-      <div class="brand">🎓 Project Eklavya</div>
+      <div class="brand" style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+        <svg width="32" height="32" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
+          <path d="M56 46C51 28 36 14 30 6C44 4 58 18 56 46Z" fill="#81C784"/>
+          <path d="M64 46C69 28 84 14 90 6C76 4 62 18 64 46Z" fill="#81C784"/>
+          <path d="M60 40V68" stroke="#81C784" stroke-width="4.5" stroke-linecap="round"/>
+          <path d="M60 88C38 76 16 78 8 88C24 104 50 102 60 88Z" fill="#4CAF50"/>
+          <path d="M60 88C82 76 104 78 112 88C96 104 70 102 60 88Z" fill="#4CAF50"/>
+          <path d="M60 76C40 66 22 68 15 76C28 90 48 88 60 76Z" fill="#E07A3E"/>
+          <path d="M60 76C80 66 98 68 105 76C92 90 72 88 60 76Z" fill="#E07A3E"/>
+          <path d="M60 64C44 56 30 58 24 64C34 76 50 74 60 64Z" fill="#A5D6A7"/>
+          <path d="M60 64C76 56 90 58 96 64C86 76 70 74 60 64Z" fill="#A5D6A7"/>
+        </svg>
+        <span style="font-size: 22px; font-weight: 700; color: #f59e0b; letter-spacing: 0.5px;">Project Eklavya</span>
+      </div>
     </div>
     <div class="content">
       <div style="text-align: center; margin-bottom: 16px;">
@@ -113,7 +126,20 @@ export function buildOtpEmail({ studentName, otp, expiryMinutes = 10 }) {
 <body>
   <div class="email-card">
     <div class="header">
-      <div class="brand">🎓 Project Eklavya</div>
+      <div class="brand" style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+        <svg width="32" height="32" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: middle;">
+          <path d="M56 46C51 28 36 14 30 6C44 4 58 18 56 46Z" fill="#81C784"/>
+          <path d="M64 46C69 28 84 14 90 6C76 4 62 18 64 46Z" fill="#81C784"/>
+          <path d="M60 40V68" stroke="#81C784" stroke-width="4.5" stroke-linecap="round"/>
+          <path d="M60 88C38 76 16 78 8 88C24 104 50 102 60 88Z" fill="#4CAF50"/>
+          <path d="M60 88C82 76 104 78 112 88C96 104 70 102 60 88Z" fill="#4CAF50"/>
+          <path d="M60 76C40 66 22 68 15 76C28 90 48 88 60 76Z" fill="#E07A3E"/>
+          <path d="M60 76C80 66 98 68 105 76C92 90 72 88 60 76Z" fill="#E07A3E"/>
+          <path d="M60 64C44 56 30 58 24 64C34 76 50 74 60 64Z" fill="#A5D6A7"/>
+          <path d="M60 64C76 56 90 58 96 64C86 76 70 74 60 64Z" fill="#A5D6A7"/>
+        </svg>
+        <span style="font-size: 22px; font-weight: 700; color: #f59e0b; letter-spacing: 0.5px;">Project Eklavya</span>
+      </div>
     </div>
     <div class="content">
       <h2 class="title">Password Reset Verification</h2>

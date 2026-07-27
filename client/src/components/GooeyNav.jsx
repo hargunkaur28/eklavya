@@ -162,7 +162,21 @@ const GooeyNav = ({
   };
 
   useEffect(() => {
+    setActiveIndex(initialActiveIndex);
+  }, [initialActiveIndex]);
+
+  useEffect(() => {
     if (!navRef.current || !containerRef.current) return;
+
+    if (activeIndex < 0 || activeIndex >= items.length) {
+      if (filterRef.current) filterRef.current.style.opacity = '0';
+      if (textRef.current) textRef.current.style.opacity = '0';
+      return;
+    }
+
+    if (filterRef.current) filterRef.current.style.opacity = '1';
+    if (textRef.current) textRef.current.style.opacity = '1';
+
     const activeLi = navRef.current.querySelectorAll('li')[activeIndex];
     if (activeLi) {
       updateEffectPosition(activeLi);
