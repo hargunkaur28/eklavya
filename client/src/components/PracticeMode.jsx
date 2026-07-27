@@ -5,6 +5,8 @@ import { translations } from '../data/translations.js';
 import { formatGradeSubjectDash } from '../utils/subjectTranslations.js';
 import { Dumbbell, Loader2, RefreshCw, CheckCircle2, XCircle, Sparkles } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
+import NarrationPrompt from './NarrationPrompt.jsx';
+import { primeAudio } from '../utils/audioPriming.js';
 import { getLocalDate } from '../utils/streak.js';
 import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestion.jsx';
 
@@ -12,7 +14,7 @@ import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestio
 // separate from the roadmap — it never marks days complete and never writes to
 // the weak-topic aggregation. It only READS weak topics to pre-fill a shortcut.
 export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
-  const { authFetch } = useAuth();
+  const { authFetch, user } = useAuth();
   const { language } = useLanguage();
   const t = translations[language]?.practice || translations.en.practice;
 
@@ -30,6 +32,8 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
   const [sessionId, setSessionId] = useState(null);
   const [result, setResult] = useState(null);
   const [includeWritten, setIncludeWritten] = useState(false); // Track 3: opt-in
+  const [promptDismissed, setPromptDismissed] = useState(false); // Phase 3
+  const [autoPlayIndex, setAutoPlayIndex] = useState(-1);
 
   const selected = subjects.find((s) => s.id === roadmapId) || subjects[0];
 
@@ -45,6 +49,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
   }, [authFetch, roadmapId, language]);
 
   const generate = useCallback(async (topicToUse) => {
+    primeAudio();
     const finalTopic = (topicToUse ?? topic).trim();
     if (!finalTopic || !selected) return;
     setTopic(finalTopic);
@@ -60,6 +65,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
       if (!res.ok || data.available === false) { setPhase('unavailable'); return; }
       setQuestions(data.questions || []);
       setSessionId(data.sessionId);
+      setAutoPlayIndex(user?.autoNarrateQuizzes !== false ? 0 : -1);
       setPhase('active');
     } catch {
       setPhase('unavailable');
@@ -178,6 +184,10 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
           <div><h3>{t.title}</h3><p>{selected?.label} · {topic}</p></div>
         </div>
         <p className="practice-not-counted"><Sparkles size={14} /> {t.notCounted}</p>
+        {/* Phase 3: one-time narration prompt */}
+        {!promptDismissed && !user?.hasSeenNarrationPrompt && (
+          <NarrationPrompt onDone={() => setPromptDismissed(true)} />
+        )}
 
         <div className="quiz-questions">
           {questions.map((q, qi) => (
@@ -188,7 +198,14 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
               </p>
               <div className="quiz-q-row">
                 <h4 className="quiz-q-text">{q.questionText}</h4>
-                <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options || [], language }} size={16} />
+                <SpeakerButton
+                  key={`speaker-prac-${qi}`}
+                  fetchPayload={{ questionText: q.questionText, options: q.options || [], language }}
+                  subject={selected?.subject}
+                  autoPlay={autoPlayIndex === qi}
+                  onEnded={() => setAutoPlayIndex((prev) => (prev === qi ? qi + 1 : prev))}
+                  size={16}
+                />
               </div>
               {q.type === 'written' ? (
                 <WrittenInput
@@ -248,7 +265,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
                 {q.type === 'written' && <span className="quiz-written-badge">{t.writtenBadge}</span>}
                 {q.questionText}
               </h4>
-              <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options || [], language }} size={16} />
+              <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options || [], language }} subject={selected?.subject} size={16} />
             </div>
             {q.type === 'written' ? (
               <WrittenReview

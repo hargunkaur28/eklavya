@@ -2,8 +2,11 @@ import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
-import { ClipboardCheck, CheckCircle2, XCircle, Loader2, RefreshCw, Sparkles, ArrowLeft } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ClipboardCheck, CheckCircle2, XCircle, Loader2, RefreshCw, Sparkles, ArrowLeft, ArrowRight } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
+import NarrationPrompt from './NarrationPrompt.jsx';
+import { primeAudio } from '../utils/audioPriming.js';
 import { getLocalDate } from '../utils/streak.js';
 import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestion.jsx';
 
@@ -11,9 +14,10 @@ import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestio
 // + cached server-side; this component presents them, submits answers, shows the
 // scored review, AND persistently surfaces the last attempt on revisit (reading
 // the already-stored moduleQuizAttempt — the same data Phase 4 aggregates).
-export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoadmapChanged }) {
-  const { authFetch } = useAuth();
+export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCompleted, onRoadmapChanged }) {
+  const { authFetch, user, activeRoadmap } = useAuth();
   const { language } = useLanguage();
+  const navigate = useNavigate();
   const t = translations[language]?.quiz || translations.en.quiz;
 
   const [status, setStatus] = useState('init'); // init|idle|summary|loading|active|submitting|result|reviewing|unavailable
@@ -22,8 +26,12 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
   const [result, setResult] = useState(null);      // post-submit result
   const [lastResult, setLastResult] = useState(null); // persisted last attempt
   const [passThreshold, setPassThreshold] = useState(0.7);
+  const [promptDismissed, setPromptDismissed] = useState(false); // Phase 3
+  const [autoPlayIndex, setAutoPlayIndex] = useState(-1);
 
   const thresholdPct = Math.round(passThreshold * 100);
+  const nextDayNum = parseInt(dayNumber, 10) + 1;
+  const maxDays = activeRoadmap?.totalDays || activeRoadmap?.days?.length || 14;
 
   // On mount / language change: load any previously-stored attempt.
   useEffect(() => {
@@ -45,6 +53,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
   }, [authFetch, roadmapId, dayNumber, language]);
 
   const startQuiz = useCallback(async () => {
+    primeAudio();
     setStatus('loading');
     setResult(null);
     setAnswers({});
@@ -54,6 +63,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
       if (!res.ok || data.available === false) { setStatus('unavailable'); return; }
       setQuestions(data.questions || []);
       setPassThreshold(data.passThreshold || 0.7);
+      setAutoPlayIndex(user?.autoNarrateQuizzes !== false ? 0 : -1);
       setStatus('active');
     } catch {
       setStatus('unavailable');
@@ -131,7 +141,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
                 {q.type === 'written' && <span className="quiz-written-badge">{t.writtenBadge}</span>}
                 {q.questionText}
               </h4>
-              <SpeakerButton audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/quiz/question/${qi}/audio?lang=${language}`} size={16} />
+              <SpeakerButton audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/quiz/question/${qi}/audio?lang=${language}`} subject={subject} size={16} />
             </div>
             {q.type === 'written' ? (
               <WrittenReview
@@ -207,14 +217,31 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
         </div>
         {renderBanner(lastResult, false)}
         <div className="practice-result-actions">
+          {lastResult.passed ? (
+            nextDayNum <= maxDays ? (
+              <button
+                type="button"
+                className="primary-button quiz-next-btn"
+                onClick={() => navigate(`/roadmap/${roadmapId}/day/${nextDayNum}`)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {t.nextModule || 'Next Module'} <ArrowRight size={16} />
+              </button>
+            ) : (
+              <span className="roadmap-completed-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', background: '#D1FAE5', color: '#065F46', borderRadius: '8px', fontWeight: 600 }}>
+                <CheckCircle2 size={16} /> {t.roadmapCompletedNotice || 'Roadmap Completed!'}
+              </span>
+            )
+          ) : (
+            <button type="button" className="ghost-button" onClick={startQuiz}>
+              <RefreshCw size={16} /> {t.retake}
+            </button>
+          )}
           {(lastResult.questions?.length > 0) && (
-            <button type="button" className="primary-button quiz-submit-btn" onClick={() => setStatus('reviewing')}>
+            <button type="button" className="ghost-button" onClick={() => setStatus('reviewing')}>
               {t.viewReview}
             </button>
           )}
-          <button type="button" className="ghost-button" onClick={startQuiz}>
-            <RefreshCw size={16} /> {t.retake}
-          </button>
         </div>
       </section>
     );
@@ -246,6 +273,10 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
           <ClipboardCheck size={22} className="quiz-head-icon" />
           <h3>{t.title}</h3>
         </div>
+        {/* Phase 3: one-time narration prompt */}
+        {!promptDismissed && !user?.hasSeenNarrationPrompt && (
+          <NarrationPrompt onDone={() => setPromptDismissed(true)} />
+        )}
         <div className="quiz-questions">
           {questions.map((q, qi) => (
             <div key={qi} className="quiz-question">
@@ -255,7 +286,14 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
               </p>
               <div className="quiz-q-row">
                 <h4 className="quiz-q-text">{q.questionText}</h4>
-                <SpeakerButton audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/quiz/question/${qi}/audio?lang=${language}`} size={16} />
+                <SpeakerButton
+                  key={`speaker-mq-${qi}`}
+                  fetchPayload={{ questionText: q.questionText, options: q.options || [], language }}
+                  subject={subject}
+                  autoPlay={autoPlayIndex === qi}
+                  onEnded={() => setAutoPlayIndex((prev) => (prev === qi ? qi + 1 : prev))}
+                  size={16}
+                />
               </div>
               {q.type === 'written' ? (
                 <WrittenInput
@@ -291,7 +329,22 @@ export default function ModuleQuiz({ roadmapId, dayNumber, onDayCompleted, onRoa
       {renderBanner(result, true)}
       {renderReview(result)}
       <div className="practice-result-actions">
-        {!result.passed && (
+        {result.passed ? (
+          nextDayNum <= maxDays ? (
+            <button
+              type="button"
+              className="primary-button quiz-next-btn"
+              onClick={() => navigate(`/roadmap/${roadmapId}/day/${nextDayNum}`)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              {t.nextModule || 'Next Module'} <ArrowRight size={16} />
+            </button>
+          ) : (
+            <span className="roadmap-completed-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', background: '#D1FAE5', color: '#065F46', borderRadius: '8px', fontWeight: 600 }}>
+              <CheckCircle2 size={16} /> {t.roadmapCompletedNotice || 'Roadmap Completed!'}
+            </span>
+          )
+        ) : (
           <button type="button" className="primary-button quiz-submit-btn" onClick={startQuiz}>
             <RefreshCw size={16} /> {t.retake}
           </button>

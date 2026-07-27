@@ -7,6 +7,9 @@ import { authMiddleware, requireRole } from '../middleware/auth.js';
 import { computeWeakTopics } from '../utils/weakTopics.js';
 import { createFailureRateLimiter } from '../utils/rateLimiter.js';
 import { getAdminCreds, setAdminCreds } from '../utils/adminCreds.js';
+import AdminConfig from '../models/AdminConfig.js';
+import { sendEmail } from '../utils/sendEmail.js';
+import { buildFailedLoginAlertEmail } from '../utils/emailTemplates.js';
 import { validatePassword, passwordErrorMessage } from '../utils/validatePassword.js';
 
 // Phase 6: admin panel. The admin is NOT a User document — it is configured
@@ -42,33 +45,90 @@ function safeEqual(a, b) {
 }
 
 // POST /api/admin/login — email + password + security code checked TOGETHER, one
-// generic error regardless of which failed (no factor-leak).
+// generic error regardless of which failed (no factor-leak). Enforces persistent 5-attempt / 2-min DB lockout & sends Brevo alert email.
 router.post('/login', requireAdminEnabled, async (req, res) => {
   try {
-    if (adminLoginLimiter.isLimited(req.ip)) {
-      return res.status(429).json({ error: 'Too many attempts. Please try again later.' });
+    const creds = await getAdminCreds(); // DB override, else env bootstrap
+    const now = new Date();
+
+    // Check DB Lockout state
+    if (creds.lockedUntil && new Date(creds.lockedUntil) > now) {
+      const remainingMs = new Date(creds.lockedUntil) - now;
+      const remainingMins = Math.ceil(remainingMs / (60 * 1000));
+      return res.status(429).json({
+        error: `Account temporarily locked. Please try again in ${remainingMins} minute${remainingMins > 1 ? 's' : ''}.`
+      });
     }
 
     const { email, password, securityCode } = req.body || {};
-    const creds = await getAdminCreds(); // DB override, else env bootstrap
 
-    // Evaluate all three factors, then AND — never early-return per factor, so a
-    // wrong email/password/code can't be told apart. Compared with a constant-time
-    // equality check.
     const emailOk = safeEqual((email || '').toLowerCase(), (creds.email || '').toLowerCase());
     const passwordOk = safeEqual(String(password || ''), String(creds.password || ''));
     const codeOk = safeEqual(String(securityCode || ''), String(creds.securityCode || ''));
 
     if (!(emailOk && passwordOk && codeOk)) {
       adminLoginLimiter.record(req.ip);
-      return res.status(401).json({ error: 'Invalid admin credentials.' }); // generic
+
+      const newAttempts = (creds.failedLoginAttempts || 0) + 1;
+      let lockedUntil = null;
+      if (newAttempts >= 5) {
+        lockedUntil = new Date(Date.now() + 2 * 60 * 1000); // 2-minute lockout
+      }
+
+      await AdminConfig.findOneAndUpdate(
+        { singleton: 'admin' },
+        { $set: { failedLoginAttempts: newAttempts, lockedUntil } },
+        { upsert: true }
+      );
+
+      const ipAddress = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress || '127.0.0.1';
+      const browser = req.headers['user-agent'] || 'Unknown Browser';
+      const istTimestamp = new Date().toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        dateStyle: 'full',
+        timeStyle: 'medium'
+      }) + ' (IST)';
+
+      const alertHtml = buildFailedLoginAlertEmail({
+        account: creds.email,
+        role: creds.role || 'Super Admin',
+        attemptCount: newAttempts,
+        ipAddress,
+        timestamp: istTimestamp,
+        browser
+      });
+
+      // Send Brevo Security Alert Email on every failed attempt
+      try {
+        await sendEmail({
+          to: creds.email,
+          subject: `Security Alert: Failed Login Attempt (${newAttempts}/5)`,
+          htmlContent: alertHtml
+        });
+      } catch (err) {
+        console.error('[Brevo Alert Error]:', err.message);
+      }
+
+      if (newAttempts >= 5) {
+        return res.status(429).json({
+          error: 'Account temporarily locked. Please try again in 2 minutes.'
+        });
+      }
+
+      return res.status(401).json({ error: 'Invalid admin credentials.' });
     }
+
+    // On successful login: reset counter and clear lockout
+    await AdminConfig.findOneAndUpdate(
+      { singleton: 'admin' },
+      { $set: { failedLoginAttempts: 0, lockedUntil: null } }
+    );
 
     // No userId in the token — admin is not a user and cannot own user data.
     const token = jwt.sign({ role: 'admin', adm: true }, JWT_SECRET, { expiresIn: ADMIN_TOKEN_TTL });
     res.json({ token, user: { id: null, name: 'Admin', email: creds.email, role: 'admin' } });
   } catch (error) {
-    console.error('Admin login error:', error.message); // never log credentials
+    console.error('Admin login error:', error);
     res.status(500).json({ error: 'Server error during admin login.' });
   }
 });

@@ -442,6 +442,7 @@ export default function RoadmapDashboard() {
                             </h4>
                             <SpeakerButton
                               audioEndpoint={`/diagnostic/${diagnosticData._id}/question/${idx}/audio?lang=${language}`}
+                              subject={diagnosticData.subject}
                               size={16}
                             />
                           </div>
@@ -487,6 +488,7 @@ export default function RoadmapDashboard() {
                               </div>
                               <SpeakerButton
                                 fetchPayload={{ questionText: `${language === 'hi' ? 'व्याख्या' : 'Explanation'}: ${displayExp}`, options: [], language }}
+                                subject={diagnosticData.subject}
                                 size={15}
                               />
                             </div>

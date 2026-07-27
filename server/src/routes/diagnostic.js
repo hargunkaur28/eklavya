@@ -8,6 +8,7 @@ import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 import { normalizeTopic } from '../utils/weakTopics.js';
 import { subjectScopeLabel, isWrittenHeavy, isKnownSubSubject, hasSubSubjects } from '../config/taxonomy.js';
+import { formatQuestionForTTS } from '../utils/ttsNormalize.js';
 
 const router = express.Router();
 
@@ -495,9 +496,7 @@ function checkLiveAudioRateLimit(userId) {
 router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res) => {
   try {
     const { id, questionIndex } = req.params;
-    const isHindi = req.query.lang === 'hi';
-    const targetLang = isHindi ? 'hi-IN' : 'en-IN';
-    const fieldName = isHindi ? 'audioQuestionHi' : 'audioQuestionEn';
+    const wantHindi = req.query.lang === 'hi';
     const idx = parseInt(questionIndex, 10);
 
     const result = await DiagnosticResult.findById(id);
@@ -514,22 +513,48 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
     }
 
     const q = result.questions[idx];
-    const hindiQ = (isHindi && result.translatedHindiQuestions && result.translatedHindiQuestions.length > idx)
+    let hindiQ = (wantHindi && result.translatedHindiQuestions && result.translatedHindiQuestions.length > idx)
       ? result.translatedHindiQuestions[idx]
       : null;
+    let effectiveHindi = wantHindi;
 
-    const stem = (isHindi && hindiQ?.questionText) ? hindiQ.questionText : q.questionText;
+    // Hindi narration requested but no cached Hindi text (e.g. narrating Hindi over an
+    // English-displayed review) → translate on demand and PERSIST it so later reads
+    // skip the call. If the translate itself fails, degrade to English narration + log
+    // (rather than speaking English text with a Hindi voice).
+    if (wantHindi && !(hindiQ && hindiQ.questionText)) {
+      try {
+        const tStem = await translateTextWithSarvam(q.questionText);
+        if (tStem && tStem.trim()) {
+          const tOpts = await Promise.all((q.options || []).map((o) => translateTextWithSarvam(o)));
+          hindiQ = {
+            questionText: tStem,
+            options: (q.options || []).map((o, i) => (tOpts[i] && tOpts[i].trim()) ? tOpts[i] : o),
+            explanation: ''
+          };
+          if (!Array.isArray(result.translatedHindiQuestions)) result.translatedHindiQuestions = [];
+          result.translatedHindiQuestions[idx] = hindiQ;
+          result.markModified('translatedHindiQuestions');
+        } else {
+          console.warn(`diag audio q${idx}: en→hi translation failed — narrating English instead of Hindi.`);
+          effectiveHindi = false;
+        }
+      } catch (err) {
+        console.warn(`diag audio q${idx}: en→hi translation error — narrating English.`, err.message);
+        effectiveHindi = false;
+      }
+    }
+
+    const targetLang = effectiveHindi ? 'hi-IN' : 'en-IN';
+    const fieldName = effectiveHindi ? 'audioQuestionHi' : 'audioQuestionEn';
+    const stem = (effectiveHindi && hindiQ?.questionText) ? hindiQ.questionText : q.questionText;
     // Written questions have no options — read only the prompt (guard the .map).
-    const options = (isHindi && hindiQ?.options && hindiQ.options.length > 0) ? hindiQ.options : (q.options || []);
+    const options = (effectiveHindi && hindiQ?.options && hindiQ.options.length > 0) ? hindiQ.options : (q.options || []);
 
-    const optLabels = ['A', 'B', 'C', 'D'];
-    const optionsStr = options.map((opt, i) => `${isHindi ? 'विकल्प' : 'Option'} ${optLabels[i] || (i + 1)}: ${opt}`).join('. ');
-    const textToSpeak = optionsStr
-      ? `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}. ${optionsStr}.`
-      : `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}.`;
+    const textToSpeak = formatQuestionForTTS(stem, options, effectiveHindi ? 'hi' : 'en');
 
     const textHash = generateContentHash(textToSpeak);
-    const filename = `diag-${id}-q${idx}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
+    const filename = `diag-${id}-q${idx}-${effectiveHindi ? 'hi' : 'en'}-${textHash}.wav`;
 
     // Self-healing disk cache check
     if (q[fieldName] && audioFileExists(filename)) {
@@ -537,11 +562,13 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
     }
 
     // Synthesize audio
-    const lockKey = `diag:${id}:q${idx}:${isHindi ? 'hi' : 'en'}:${textHash}`;
+    const lockKey = `diag:${id}:q${idx}:${effectiveHindi ? 'hi' : 'en'}:${textHash}`;
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      return res.status(500).json({ error: 'Failed to synthesize question audio.' });
+      // Sarvam (+ OpenAI for Hindi) all failed → hand the text to the client so it can
+      // Web-Speak it, rather than erroring with no fallback text.
+      return res.json({ useFallback: true, fallbackText: textToSpeak });
     }
 
     const audioUrl = saveAudioFile(filename, audioBuffer);
@@ -559,8 +586,11 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
 router.post('/live-audio', authMiddleware, async (req, res) => {
   try {
     const { questionText, options, language } = req.body;
-    const isHindi = language === 'hi';
-    const targetLang = isHindi ? 'hi-IN' : 'en-IN';
+    const displayedLang = language === 'hi' ? 'hi' : 'en';
+    // Resolved narration language (Phase 2 table, sent by the client). Defaults to
+    // the displayed language when absent.
+    let narrateLang = (req.body.narrationLang === 'hi' || req.body.narrationLang === 'en')
+      ? req.body.narrationLang : displayedLang;
 
     // Per-user rate limiting check
     if (!checkLiveAudioRateLimit(req.userId)) {
@@ -571,10 +601,42 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'questionText is required.' });
     }
 
-    const optLabels = ['A', 'B', 'C', 'D'];
-    const optsList = Array.isArray(options) ? options : [];
-    const optionsStr = optsList.map((opt, i) => `${isHindi ? 'विकल्प' : 'Option'} ${optLabels[i] || (i + 1)}: ${opt}`).join('. ');
-    const textToSpeak = `${isHindi ? 'प्रश्न' : 'Question'}: ${questionText}. ${optionsStr}.`;
+    let stem = questionText;
+    let optsList = Array.isArray(options) ? options : [];
+
+    // Translate-on-demand when the narration language differs from the supplied text.
+    if (narrateLang !== displayedLang) {
+      if (narrateLang === 'hi') {
+        // en → hi is supported. On failure, degrade to narrating the displayed text
+        // (still reaches SOMETHING for the student) and log it.
+        try {
+          const tStem = await translateTextWithSarvam(questionText);
+          if (tStem && tStem.trim()) {
+            const tOpts = await Promise.all(optsList.map((o) => translateTextWithSarvam(o)));
+            stem = tStem;
+            optsList = optsList.map((o, i) => (tOpts[i] && tOpts[i].trim()) ? tOpts[i] : o);
+          } else {
+            console.warn('live-audio: en→hi translation failed — narrated in displayed language (en) instead of requested (hi).');
+            narrateLang = displayedLang;
+          }
+        } catch (err) {
+          console.warn('live-audio: en→hi translation error — narrated in displayed language (en).', err.message);
+          narrateLang = displayedLang;
+        }
+      } else {
+        // hi → en is NOT supported (translateTextWithSarvam is en→hi only). Known,
+        // documented gap: the student chose English narration but the live content is
+        // Hindi. Degrade to the displayed (hi) text and log it EXPLICITLY so it leaves
+        // a clear trail (see PRODUCTION_CHECKLIST — this actively differs from the
+        // student's stated preference, unlike a plain translate failure).
+        console.warn('live-audio: hi→en translation unsupported for live-audio; narrated in displayed language (hi) instead of requested preference (en).');
+        narrateLang = displayedLang;
+      }
+    }
+
+    const isHindi = narrateLang === 'hi';
+    const targetLang = isHindi ? 'hi-IN' : 'en-IN';
+    const textToSpeak = formatQuestionForTTS(stem, optsList, isHindi ? 'hi' : 'en');
 
     const textHash = generateContentHash(textToSpeak);
     const filename = `live-q-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;

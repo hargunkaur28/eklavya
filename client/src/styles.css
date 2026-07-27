@@ -4603,6 +4603,18 @@ button {
 .mentor-send:hover { background: #255730; }
 .mentor-send:disabled { opacity: 0.5; cursor: default; }
 .mentor-loading { display: flex; justify-content: center; padding: 1.5rem; color: #2F6B3A; }
+.mentor-bubble-actions { display: flex; justify-content: flex-end; margin-top: 0.35rem; }
+.mentor-recording-notice { padding: 0.4rem 1rem; background: #FFF3E0; color: #E07A3E; font-size: 0.82rem; border-top: 1px solid #FFE0B2; text-align: center; }
+.mentor-mic-btn {
+  flex-shrink: 0; width: 44px; background: #FAF7F1; color: #5C5649; border: 1px solid #E4DED3;
+  border-radius: 12px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  transition: all 0.2s ease;
+}
+.mentor-mic-btn:hover { border-color: #2F6B3A; color: #2F6B3A; }
+.mentor-mic-btn.recording {
+  background: #FFEBEE; border-color: #D32F2F; color: #D32F2F;
+  animation: pulse 1.5s infinite;
+}
 
 @media (max-width: 768px) {
   .mentor-page { flex-direction: column; height: auto; padding: 0 0.75rem; }
@@ -4789,3 +4801,118 @@ button {
 }
 .quiz-written-expected ul { margin: 0.3rem 0 0 0; padding-left: 1.15rem; }
 .quiz-written-expected li { font-size: 0.86rem; line-height: 1.5; color: #5F5849; margin-bottom: 0.2rem; }
+
+/* ── Narration settings (voice-narration feature) ── */
+.narration-settings {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #E4DED3;
+  text-align: left;
+}
+.narration-settings-head { display: flex; align-items: center; gap: 0.5rem; color: #2F6B3A; margin-bottom: 1rem; }
+.narration-settings-head h3 { margin: 0; font-size: 1.05rem; color: #3A3428; }
+.narration-field-label { display: block; font-size: 0.85rem; font-weight: 700; color: #6B6357; margin-bottom: 0.6rem; }
+.narration-radio-group { display: flex; flex-direction: column; gap: 0.6rem; }
+.narration-radio {
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  padding: 0.7rem 0.9rem; border: 1px solid #D9D2C6; border-radius: 10px;
+  background: #FFFDFA; cursor: pointer; transition: all 0.15s ease;
+}
+.narration-radio.selected { border-color: #2F6B3A; background: #F1F7F1; box-shadow: 0 0 0 2px rgba(47,107,58,0.12); }
+.narration-radio input { margin-top: 0.2rem; flex-shrink: 0; accent-color: #2F6B3A; }
+.narration-radio-body { display: flex; flex-direction: column; gap: 0.15rem; }
+.narration-radio-body strong { font-size: 0.92rem; color: #3A3428; }
+.narration-radio-body small { font-size: 0.8rem; color: #7A7264; }
+.narration-toggle {
+  display: flex; align-items: flex-start; gap: 0.6rem; margin-top: 1rem;
+  padding: 0.75rem 0.9rem; border: 1px solid #E4DED3; border-radius: 12px; background: #FAF7F1; cursor: pointer;
+}
+.narration-toggle input { margin-top: 0.2rem; flex-shrink: 0; accent-color: #2F6B3A; }
+.narration-toggle span { display: flex; flex-direction: column; gap: 0.15rem; }
+.narration-toggle strong { font-size: 0.92rem; color: #3A3428; }
+.narration-toggle small { font-size: 0.8rem; color: #7A7264; }
+
+/* ── Phase 3: narration prompt popup ─────────────────────────────── */
+.narration-prompt-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45); backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease;
+}
+.narration-prompt-card {
+  background: #FFFDF8; border-radius: 20px; padding: 2rem 1.75rem;
+  max-width: 420px; width: 92vw; box-shadow: 0 12px 48px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; align-items: center; gap: 0.75rem;
+  animation: modalSlideUp 0.25s ease;
+}
+.narration-prompt-icon {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: linear-gradient(135deg, #E8F5E9, #C8E6C9);
+  display: flex; align-items: center; justify-content: center;
+  color: #2F6B3A;
+}
+.narration-prompt-title {
+  font-size: 1.15rem; font-weight: 700; color: #3A3428; margin: 0; text-align: center;
+}
+.narration-prompt-desc {
+  font-size: 0.88rem; color: #7A7264; text-align: center; margin: 0 0 0.25rem;
+  line-height: 1.45;
+}
+
+/* Yes / No buttons */
+.narration-prompt-choices {
+  display: flex; gap: 0.75rem; width: 100%; margin-top: 0.25rem;
+}
+.narration-prompt-choice {
+  flex: 1; padding: 0.7rem 0.5rem; border-radius: 12px; font-size: 0.92rem;
+  font-weight: 600; cursor: pointer; transition: all 0.18s ease;
+  border: 1.5px solid #E4DED3; background: #FAF7F1; color: #5C5649;
+}
+.narration-prompt-choice:hover { border-color: #2F6B3A; color: #2F6B3A; }
+.narration-prompt-choice.selected {
+  border-color: #2F6B3A; background: #E8F5E9; color: #2F6B3A;
+}
+
+/* Language sub-choice */
+.narration-prompt-lang {
+  width: 100%; display: flex; flex-direction: column; gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+.narration-prompt-lang-label {
+  font-size: 0.82rem; font-weight: 600; color: #5C5649; text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.narration-prompt-lang-options { display: flex; flex-direction: column; gap: 0.4rem; }
+.narration-prompt-lang-opt {
+  display: flex; align-items: flex-start; gap: 0.55rem;
+  padding: 0.6rem 0.75rem; border: 1.5px solid #E4DED3; border-radius: 12px;
+  background: #FAF7F1; cursor: pointer; transition: all 0.18s ease;
+}
+.narration-prompt-lang-opt:hover { border-color: #2F6B3A; }
+.narration-prompt-lang-opt.selected {
+  border-color: #2F6B3A; background: #E8F5E9;
+}
+.narration-prompt-lang-opt input { margin-top: 0.2rem; flex-shrink: 0; accent-color: #2F6B3A; }
+.narration-prompt-lang-opt span { display: flex; flex-direction: column; gap: 0.1rem; }
+.narration-prompt-lang-opt strong { font-size: 0.9rem; color: #3A3428; }
+.narration-prompt-lang-opt small { font-size: 0.78rem; color: #7A7264; }
+
+/* Confirm button */
+.narration-prompt-confirm { width: 100%; margin-top: 0.5rem; }
+
+/* Modal slide-up animation (reuse if not already defined) */
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── SpeakerButton: autoplay-blocked pulse highlight ─────────────── */
+.speaker-btn.autoplay-blocked {
+  animation: speakerPulse 1.8s infinite;
+  border-color: #E07A3E; color: #E07A3E;
+  background: #FFF3E0;
+}
+@keyframes speakerPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(224, 122, 62, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(224, 122, 62, 0); }
+}

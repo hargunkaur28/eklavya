@@ -220,6 +220,23 @@
 - **Migration:** existing flat English/Science/Social Science roadmaps + diagnostic results were **grandfathered** to their Fusion/Combined equivalent (an old flat "English" already spanned writing+grammar+reading = Fusion) via `server/src/scripts/backfill-subsubject.js` — non-destructive, idempotent, `--dry-run` default, reversible via `--rollback` (logs modified ids). Non-split subjects and legacy docs (no `subSubject`) keep working unchanged (`''` default).
 - **Backend:** no new endpoints — the existing diagnostic/roadmap/practice generate + submit routes are sub-subject-aware (scoped Groq generation, static-bank bypass for split subjects, identity-key archiving, `getResourceLinkForTopic` scoped out for sub-subjects), all keeping their `requireRole('student')` gating.
 
+### 21. Voice Narration Preferences & Mentor Voice I/O
+- **What it does:** Adds account-wide **voice-narration preferences** and **voice I/O across the app**:
+  - **Account-wide preferences:** `narrationLanguagePref` ('hindi', 'english', 'match-toggle') and `autoNarrateQuizzes` (boolean) persisted on the `User` model, hydrated on login, synced across devices, and editable in **Settings → Profile**.
+  - **First-run narration prompt:** A one-time modal prompt (`hasSeenNarrationPrompt`) shown on the student's first quiz encounter (Diagnostic, Module Quiz, or Practice). Yes/No choice with language sub-choice. "No" or "Yes" marks the prompt as seen so it never nags again.
+  - **Auto-narrate quiz questions:** Questions auto-narrate on load when enabled, using an `autoPlay` prop on `SpeakerButton`. Browser autoplay-policy blocks (`NotAllowedError`) degrade gracefully to a pulsing visual highlight ("Tap to listen"). In multi-question renders (ModuleQuiz, PracticeMode), auto-play is restricted to Q1 to prevent audio overlap.
+  - **Language resolution & fallback chain:** Hindi narration is default site-wide except for English-subject content (exempt rule). English uses `Sarvam -> Web Speech`. Hindi uses `Sarvam -> OpenAI TTS (gpt-4o-mini-tts) -> Web Speech` (since Groq TTS doesn't support Devanagari).
+  - **Mentor voice I/O:** Adds a manual speaker button to Mentor assistant replies (using `SpeakerButton` with `ttsText` via the upgraded `/api/chat/tts` endpoint) and a microphone button to the Mentor input area (reusing the shared `useSpeechInput` hook for SpeechRecognition live dictation + MediaRecorder/Sarvam STT fallback). Note: Mentor replies are manual-only (no auto-play).
+- **Components/Pages:**
+  - `client/src/components/NarrationPrompt.jsx` (one-time prompt modal)
+  - `client/src/components/SpeakerButton.jsx` (extended with `autoPlay`, `ttsText`, autoplay-blocked handling)
+  - `client/src/hooks/useSpeechInput.js` (reusable STT hook for ChatWidget and MentorPage)
+  - `client/src/pages/MentorPage.jsx`, `client/src/components/ChatWidget.jsx`, `client/src/pages/ProfilePage.jsx`
+- **Backend Routes & Utilities:**
+  - `PATCH /api/auth/preferences` (account-level preference saving)
+  - `POST /api/chat/tts` (upgraded to use `synthesizeSpeech` with Sarvam -> OpenAI Hindi fallback)
+  - `server/src/utils/openaiTts.js` (OpenAI TTS fallback), `server/src/utils/narration.js` / `client/src/utils/narration.js` (language resolution logic)
+
 ---
 
 ## Tech Stack

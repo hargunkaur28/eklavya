@@ -9,7 +9,10 @@ import { createFailureRateLimiter } from '../utils/rateLimiter.js';
 import multer from 'multer';
 import { cloudinaryConfigured, uploadProfilePhoto, deleteProfilePhoto } from '../utils/cloudinary.js';
 import { sniffImageMime } from '../utils/imageSniff.js';
-import { getAdminCreds } from '../utils/adminCreds.js';
+import crypto from 'crypto';
+import PasswordResetOtp from '../models/PasswordResetOtp.js';
+import { sendEmail } from '../utils/sendEmail.js';
+import { buildOtpEmail } from '../utils/emailTemplates.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -116,7 +119,14 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign({ userId: user._id, role: sessionRole }, JWT_SECRET, { expiresIn: tokenDuration });
     res.json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: sessionRole, photoUrl: user.photoUrl || null },
+      user: {
+        id: user._id, name: user.name, email: user.email, role: sessionRole, photoUrl: user.photoUrl || null,
+        // Narration/voice prefs so the client can sync siteLanguage + prefs at login
+        // without a second round-trip (only applied for a student session client-side).
+        narrationLanguagePref: user.narrationLanguagePref || 'hindi',
+        autoNarrateQuizzes: !!user.autoNarrateQuizzes,
+        siteLanguage: user.siteLanguage || 'en'
+      },
       // Parent must set their own password before using the dashboard (enforced with
       // the Phase 4 change-password flow). Only meaningful for a parent session.
       mustChangePassword: sessionRole === 'parent' && !!user.parentMustChangePassword
@@ -149,7 +159,12 @@ router.get('/me', authMiddleware, async (req, res) => {
         id: user._id, name: user.name, email: user.email, role: req.role,
         // Whether this student has created parent access (Option B: hash presence).
         parentLinked: !!user.parentPasswordHash,
-        photoUrl: user.photoUrl || null // Phase 7.5 (parent reads this via Option B)
+        photoUrl: user.photoUrl || null, // Phase 7.5 (parent reads this via Option B)
+        // Narration/voice prefs — client hydrates these on login/refresh.
+        narrationLanguagePref: user.narrationLanguagePref || 'hindi',
+        autoNarrateQuizzes: !!user.autoNarrateQuizzes,
+        hasSeenNarrationPrompt: !!user.hasSeenNarrationPrompt,
+        siteLanguage: user.siteLanguage || 'en'
       },
       // Phase 4: so the client re-derives the forced-change state on refresh, not
       // just from the login response. Only a parent session with the flag set.
@@ -327,6 +342,60 @@ router.patch('/profile', authMiddleware, requireRole('student'), async (req, res
   }
 });
 
+// PATCH /api/auth/preferences — a STUDENT updates their account-level narration/voice
+// preferences (kept SEPARATE from /profile: low-stakes, no password gate, unrelated to
+// the sensitive email-change flow). Only the three known fields are accepted; each is
+// validated against its enum. Parent/admin never call this (no quiz-taking flows).
+router.patch('/preferences', authMiddleware, requireRole('student'), async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    const { narrationLanguagePref, autoNarrateQuizzes, siteLanguage } = req.body || {};
+    let changed = false;
+
+    if (narrationLanguagePref !== undefined) {
+      if (!['hindi', 'english', 'match-toggle'].includes(narrationLanguagePref)) {
+        return res.status(400).json({ error: 'Invalid narrationLanguagePref.' });
+      }
+      user.narrationLanguagePref = narrationLanguagePref; changed = true;
+    }
+    if (autoNarrateQuizzes !== undefined) {
+      if (typeof autoNarrateQuizzes !== 'boolean') {
+        return res.status(400).json({ error: 'autoNarrateQuizzes must be a boolean.' });
+      }
+      user.autoNarrateQuizzes = autoNarrateQuizzes; changed = true;
+    }
+    if (req.body.hasSeenNarrationPrompt !== undefined) {
+      if (typeof req.body.hasSeenNarrationPrompt !== 'boolean') {
+        return res.status(400).json({ error: 'hasSeenNarrationPrompt must be a boolean.' });
+      }
+      user.hasSeenNarrationPrompt = req.body.hasSeenNarrationPrompt; changed = true;
+    }
+    if (siteLanguage !== undefined) {
+      if (!['en', 'hi'].includes(siteLanguage)) {
+        return res.status(400).json({ error: 'Invalid siteLanguage.' });
+      }
+      user.siteLanguage = siteLanguage; changed = true;
+    }
+
+    if (!changed) return res.status(400).json({ error: 'No preference changes to save.' });
+    await user.save();
+
+    res.json({
+      preferences: {
+        narrationLanguagePref: user.narrationLanguagePref,
+        autoNarrateQuizzes: user.autoNarrateQuizzes,
+        hasSeenNarrationPrompt: user.hasSeenNarrationPrompt,
+        siteLanguage: user.siteLanguage
+      }
+    });
+  } catch (error) {
+    console.error('Preferences update error:', error.message);
+    res.status(500).json({ error: 'Server error updating preferences.' });
+  }
+});
+
 // POST /api/auth/profile/photo (Phase 7.5) — a STUDENT uploads/replaces their own
 // avatar. The image goes to OUR server first (never client→Cloudinary directly),
 // is validated by its real magic bytes (not the spoofable extension/Content-Type),
@@ -384,6 +453,158 @@ router.delete('/profile/photo', authMiddleware, requireRole('student'), async (r
   } catch (error) {
     console.error('Profile photo delete error:', error.message);
     res.status(500).json({ error: 'Server error removing photo.' });
+  }
+});
+
+// POST /api/auth/forgot-password — Request a 6-digit numeric OTP sent via Brevo to the student's email address
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email, accountType = 'student' } = req.body || {};
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Email address is required.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: cleanEmail });
+
+    if (!user) {
+      // Generic message to prevent account enumeration
+      return res.json({ message: 'If an account exists with this email, a verification code (OTP) has been sent.' });
+    }
+
+    // Rate-limit: Max 3 OTP requests per 15 minutes per account
+    const fifteenMinsAgo = new Date(Date.now() - 15 * 60 * 1000);
+    const recentCount = await PasswordResetOtp.countDocuments({ email: cleanEmail, createdAt: { $gte: fifteenMinsAgo } });
+    if (recentCount >= 3) {
+      return res.status(429).json({ error: 'Too many password reset requests. Please try again in 15 minutes.' });
+    }
+
+    // Generate 6-digit numeric OTP
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+
+    // Remove existing OTP for this email & role
+    await PasswordResetOtp.deleteMany({ email: cleanEmail, accountType });
+
+    // Store new hashed OTP valid for 10 minutes
+    await PasswordResetOtp.create({
+      email: cleanEmail,
+      otpHash,
+      accountType,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    });
+
+    // Build & send email via Brevo
+    const htmlContent = buildOtpEmail({ studentName: user.name, otp, expiryMinutes: 10 });
+    const sendResult = await sendEmail({
+      to: cleanEmail,
+      subject: 'Project Eklavya — Password Reset Verification Code',
+      htmlContent
+    });
+
+    if (!sendResult.success && !sendResult.simulated) {
+      return res.status(502).json({ error: 'Failed to send OTP email. Please try again later.' });
+    }
+
+    res.json({ message: 'If an account exists with this email, a verification code (OTP) has been sent.' });
+  } catch (error) {
+    console.error('Forgot password error:', error.message);
+    res.status(500).json({ error: 'Server error processing forgot password request.' });
+  }
+});
+
+// POST /api/auth/verify-otp — Verify 6-digit OTP and issue 10-minute password reset token
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { email, otp, accountType = 'student' } = req.body || {};
+    if (!email || !otp) {
+      return res.status(400).json({ error: 'Email and OTP verification code are required.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const otpDoc = await PasswordResetOtp.findOne({ email: cleanEmail, accountType });
+
+    if (!otpDoc || new Date(otpDoc.expiresAt) < new Date()) {
+      return res.status(400).json({ error: 'OTP has expired or is invalid. Please request a new code.' });
+    }
+
+    // Max 5 attempts per OTP
+    if (otpDoc.attempts >= 5) {
+      return res.status(429).json({ error: 'Too many incorrect OTP attempts. Please request a new verification code.' });
+    }
+
+    const incomingHash = crypto.createHash('sha256').update(String(otp).trim()).digest('hex');
+    if (incomingHash !== otpDoc.otpHash) {
+      otpDoc.attempts += 1;
+      await otpDoc.save();
+      return res.status(400).json({ error: 'Incorrect verification code. Please check and try again.' });
+    }
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    // Delete OTP document after successful verification
+    await PasswordResetOtp.deleteOne({ _id: otpDoc._id });
+
+    // Issue short-lived password reset JWT token (10 minutes)
+    const resetToken = jwt.sign(
+      { userId: user._id, email: user.email, accountType, purpose: 'password_reset' },
+      JWT_SECRET,
+      { expiresIn: '10m' }
+    );
+
+    res.json({ resetToken, message: 'OTP verified successfully.' });
+  } catch (error) {
+    console.error('Verify OTP error:', error.message);
+    res.status(500).json({ error: 'Server error verifying OTP.' });
+  }
+});
+
+// POST /api/auth/reset-password — Accept reset token + new password and update account password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { resetToken, newPassword } = req.body || {};
+    if (!resetToken || !newPassword) {
+      return res.status(400).json({ error: 'Reset token and new password are required.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, JWT_SECRET);
+    } catch {
+      return res.status(400).json({ error: 'Reset token has expired or is invalid. Please request a new OTP.' });
+    }
+
+    if (decoded.purpose !== 'password_reset') {
+      return res.status(400).json({ error: 'Invalid reset token purpose.' });
+    }
+
+    // Validate password policy
+    const check = validatePassword(newPassword);
+    if (!check.valid) {
+      return res.status(400).json({ error: passwordErrorMessage(check.errors) });
+    }
+
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User account not found.' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    if (decoded.accountType === 'parent') {
+      user.parentPasswordHash = newHash;
+      user.parentMustChangePassword = false;
+    } else {
+      user.passwordHash = newHash;
+    }
+
+    await user.save();
+    res.json({ message: 'Password updated successfully! You can now log in with your new password.' });
+  } catch (error) {
+    console.error('Reset password error:', error.message);
+    res.status(500).json({ error: 'Server error resetting password.' });
   }
 });
 

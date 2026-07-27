@@ -5,9 +5,27 @@ import AdminConfig from '../models/AdminConfig.js';
 // editor so there is ONE source of truth.
 export async function getAdminCreds() {
   try {
-    const cfg = await AdminConfig.findOne({ singleton: 'admin' });
+    let cfg = await AdminConfig.findOne({ singleton: 'admin' });
+    if (!cfg && process.env.ADMIN_EMAIL) {
+      cfg = await AdminConfig.create({
+        singleton: 'admin',
+        email: process.env.ADMIN_EMAIL,
+        password: process.env.ADMIN_PASSWORD,
+        securityCode: process.env.ADMIN_SECURITY_CODE,
+        role: 'Super Admin',
+        failedLoginAttempts: 0,
+        lockedUntil: null
+      });
+    }
     if (cfg) {
-      return { email: cfg.email || '', password: cfg.password || '', securityCode: cfg.securityCode || '' };
+      return {
+        email: (cfg.email && cfg.email.trim()) || process.env.ADMIN_EMAIL || '',
+        password: (cfg.password && cfg.password.trim()) || process.env.ADMIN_PASSWORD || '',
+        securityCode: (cfg.securityCode && cfg.securityCode.trim()) || process.env.ADMIN_SECURITY_CODE || '',
+        role: cfg.role || 'Super Admin',
+        failedLoginAttempts: cfg.failedLoginAttempts || 0,
+        lockedUntil: cfg.lockedUntil || null
+      };
     }
   } catch {
     // fall through to env on any DB hiccup
@@ -15,7 +33,10 @@ export async function getAdminCreds() {
   return {
     email: process.env.ADMIN_EMAIL || '',
     password: process.env.ADMIN_PASSWORD || '',
-    securityCode: process.env.ADMIN_SECURITY_CODE || ''
+    securityCode: process.env.ADMIN_SECURITY_CODE || '',
+    role: 'Super Admin',
+    failedLoginAttempts: 0,
+    lockedUntil: null
   };
 }
 

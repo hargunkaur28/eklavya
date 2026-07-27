@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import { localizeReply } from '../utils/localizeReply.js';
 import { sarvamTextToSpeech, sarvamSpeechToText } from '../utils/sarvamClient.js';
+import { synthesizeSpeech } from '../utils/textToSpeech.js';
 import { fetchYoutubeResources } from '../utils/fetchYoutubeResources.js';
 import { callGroqChat } from '../utils/groqClient.js';
 import { siteRoutes, navigationKeywords } from '../data/siteRoutes.js';
@@ -48,6 +49,7 @@ function optionalAuthMiddleware(req, res, next) {
 const chatRateLimitMap = new Map();
 
 function checkChatRateLimit(ip) {
+  if (process.env.SKIP_RATE_LIMIT === 'true') return true;
   const now = Date.now();
   const windowMs = 60 * 1000;
   const maxRequests = 20;
@@ -139,7 +141,8 @@ async function extractTopicFromMessage(message) {
 /**
  * Build the system prompt for general Q&A, with optional user personalization.
  */
-function buildSystemPrompt(userContext = null) {
+function buildSystemPrompt(userContext = null, language = 'en') {
+  const isHindi = language === 'hi' || language === 'hi-IN';
   let prompt = `You are Eklavya Assistant, a friendly and helpful AI tutor for Project Eklavya, an educational platform for Indian students. You help students with academic questions, explain concepts clearly, and guide them through the platform.
 
 SITE KNOWLEDGE (use this to answer questions about the platform accurately — never make up features or pages that don't exist):
@@ -153,9 +156,13 @@ IMPORTANT RULES:
 - If you don't know something, say so honestly rather than guessing.
 - You can answer general academic questions (math problems, science concepts, etc.) even if they're not directly related to a course on the platform.`;
 
+  if (isHindi) {
+    prompt += `\n\nCRITICAL LANGUAGE REQUIREMENT: The student's active language is Hindi. You MUST respond entirely in natural, fluent Hindi (using Devanagari script). Write your whole answer in Hindi. Do not respond in English.`;
+  }
+
   if (userContext) {
     prompt += `\n\nCURRENT USER CONTEXT (use this to personalize your responses):`;
-    if (userContext.name) prompt += `\n- Student name: ${userContext.name}`;
+    if (userContext.name) prompt += `\n- Student name: ${userContext.name} (Keep student names in original Latin script, e.g. "नमस्ते ${userContext.name}!", do not transliterate names into Devanagari script)`;
     if (userContext.grade) prompt += `\n- Grade/Level: ${userContext.grade}`;
     if (userContext.subject) prompt += `\n- Subject: ${userContext.subject}`;
     if (userContext.currentDay) prompt += `\n- Currently on Day ${userContext.currentDay} of their study roadmap`;
@@ -314,7 +321,7 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
     if (!navMatches && !wantsResources) {
       // Pure general Q&A — call Groq
       try {
-        const systemPrompt = buildSystemPrompt(userContext);
+        const systemPrompt = buildSystemPrompt(userContext, language);
 
         // Cap conversation history at last 10 messages
         const recentHistory = conversationHistory.slice(-10);
@@ -337,7 +344,7 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
       const lower = message.toLowerCase();
       if (lower.includes('explain') || lower.includes('what is') || lower.includes('help me understand')) {
         try {
-          const systemPrompt = buildSystemPrompt(userContext);
+          const systemPrompt = buildSystemPrompt(userContext, language);
           const messages = [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: `Give a brief 2-3 sentence explanation of: ${message}` }
@@ -353,10 +360,14 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
     }
 
     // Combine reply parts
-    const englishReply = replyParts.join('\n\n');
+    const rawReplyText = replyParts.join('\n\n');
 
-    // ── Language localization (shared step for ALL reply types) ──
-    const localizedReply = await localizeReply(englishReply, language);
+    // ── Language localization (shared step for non-LLM static/navigation text) ──
+    // Groq Q&A answers generated with language === 'hi' are already native Hindi from the LLM prompt.
+    // localizeReply is only used for non-LLM static fallback strings or navigation messages.
+    const localizedReply = (!navMatches && !wantsResources && language === 'hi')
+      ? rawReplyText
+      : await localizeReply(rawReplyText, language);
 
     // Build final response.
     // Note on type: The frontend renders route (nav button) and resources (video cards)
@@ -388,7 +399,9 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
 });
 
 // ── POST /api/chat/tts ──
-
+// Phase 4: upgraded to the full synthesizeSpeech pipeline (Sarvam → OpenAI Hindi
+// fallback) instead of calling sarvamTextToSpeech directly. Both ChatWidget and
+// Mentor replies benefit — Hindi TTS now has the OpenAI fallback when Sarvam fails.
 router.post('/tts', optionalAuthMiddleware, async (req, res) => {
   try {
     if (!checkChatRateLimit(req.ip)) {
@@ -401,16 +414,19 @@ router.post('/tts', optionalAuthMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Text is required.' });
     }
 
-    // Cap text length at 500 characters for cost/latency control
-    const truncatedText = text.length > 500 ? text.substring(0, 500) + '...' : text;
+    // Cap text length for cost/latency control. Raised from 500 → 2000 for Mentor
+    // replies; the chunking inside synthesizeSpeech handles arbitrary lengths.
+    const truncatedText = text.length > 2000 ? text.substring(0, 2000) + '...' : text;
     const targetLang = language === 'hi' ? 'hi-IN' : 'en-IN';
 
-    const audioBase64 = await sarvamTextToSpeech(truncatedText, targetLang);
+    // Full pipeline: Sarvam Bulbul → OpenAI Hindi fallback → null (client Web Speech).
+    const audioBuffer = await synthesizeSpeech(truncatedText, targetLang);
 
-    if (audioBase64) {
+    if (audioBuffer) {
+      const audioBase64 = audioBuffer.toString('base64');
       res.json({ success: true, audio: audioBase64 });
     } else {
-      // Sarvam TTS failed — frontend will handle browser fallback
+      // TTS pipeline exhausted — frontend falls back to browser Web Speech
       res.status(502).json({ success: false });
     }
   } catch (error) {

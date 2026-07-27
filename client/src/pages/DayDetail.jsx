@@ -18,9 +18,13 @@ function getYouTubeVideoId(url) {
 
 export default function DayDetail() {
   const { roadmapId, dayNumber } = useParams();
-  const { authFetch, refreshRoadmap } = useAuth();
+  const { authFetch, refreshRoadmap, roadmaps, user } = useAuth();
   const { language } = useLanguage();
   const navigate = useNavigate();
+
+  // Subject of the roadmap this day belongs to — drives narration-language resolution
+  // (English content is exempt from the Hindi-default). Resolved from the loaded list.
+  const roadmapSubject = (roadmaps || []).find((r) => r._id === roadmapId)?.subject || '';
 
   const t = translations[language]?.dayDetail || translations.en.dayDetail;
   const tDash = translations[language]?.dashboard || translations.en.dashboard;
@@ -30,6 +34,7 @@ export default function DayDetail() {
   const [error, setError] = useState('');
   const [toggling, setToggling] = useState(false);
   const [gateMessage, setGateMessage] = useState('');
+  const [autoPlayIndex, setAutoPlayIndex] = useState(user?.autoNarrateQuizzes !== false ? 0 : -1);
   // Phase 2 (revised): per-video watch state, keyed by videoId.
   const [videoProgress, setVideoProgress] = useState({});
   const [videoThreshold, setVideoThreshold] = useState(0.9);
@@ -205,8 +210,20 @@ export default function DayDetail() {
             <span className="day-pill">{typeof tDash.day === 'function' ? tDash.day(dayData.dayNumber) : `Day ${dayData.dayNumber}`}</span>
             <span className="day-time"><Clock size={14} /> {typeof tDash.mins === 'function' ? tDash.mins(dayData.estimatedMinutes || 30) : `${dayData.estimatedMinutes || 30} mins`}</span>
           </div>
-          <h2>{dayData.topic}</h2>
-          <p className="day-focus-text">{dayData.focus}</p>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+            <div>
+              <h2>{dayData.topic}</h2>
+              <p className="day-focus-text">{dayData.focus}</p>
+            </div>
+            <SpeakerButton
+              ttsText={`${dayData.topic}. ${dayData.focus}`}
+              fallbackText={`${dayData.topic}. ${dayData.focus}`}
+              subject={roadmapSubject}
+              autoPlay={autoPlayIndex === 0}
+              onEnded={() => setAutoPlayIndex((prev) => (prev === 0 ? 1 : prev))}
+              size={16}
+            />
+          </div>
         </header>
 
         {/* Prose Content Body */}
@@ -215,6 +232,9 @@ export default function DayDetail() {
             <h3 style={{ margin: 0 }}>{t.overviewKeyConcepts}</h3>
             <SpeakerButton
               audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/audio?lang=${language}`}
+              subject={roadmapSubject}
+              autoPlay={autoPlayIndex === 1}
+              onEnded={() => setAutoPlayIndex(-1)}
               size={18}
             />
           </div>
@@ -332,6 +352,7 @@ export default function DayDetail() {
         <ModuleQuiz
           roadmapId={roadmapId}
           dayNumber={dayNumber}
+          subject={roadmapSubject}
           onDayCompleted={handleDayCompleted}
           onRoadmapChanged={refreshRoadmap}
         />

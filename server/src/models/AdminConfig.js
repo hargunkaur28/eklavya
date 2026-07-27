@@ -12,6 +12,9 @@ const adminConfigSchema = new mongoose.Schema({
   email: { type: String },
   password: { type: String },
   securityCode: { type: String },
+  role: { type: String, default: 'Super Admin' },
+  failedLoginAttempts: { type: Number, default: 0 },
+  lockedUntil: { type: Date, default: null },
   updatedAt: { type: Date, default: Date.now }
 });
 

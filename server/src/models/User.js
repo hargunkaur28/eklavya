@@ -26,6 +26,25 @@ const userSchema = new mongoose.Schema({
   // student watches a video to threshold, submits a module quiz, or does a
   // practice session. Streaks are computed client-side from these local dates.
   studyDates: { type: [String], default: [] },
+  // Narration/voice preferences (account-level so they survive across devices/logins,
+  // same additive-default pattern as `role`/`photoUrl` — existing users get the
+  // defaults with zero migration).
+  // How quiz/lesson narration picks its language. 'hindi' (site-wide default per
+  // spec) narrates Hindi for all NON-English subjects regardless of what's on screen;
+  // 'english' always narrates English; 'match-toggle' follows the site language toggle
+  // (the pre-feature behavior, kept as an explicit opt-in).
+  narrationLanguagePref: { type: String, enum: ['hindi', 'english', 'match-toggle'], default: 'hindi' },
+  // Whether questions auto-narrate on load. Default false — never auto-play audio
+  // before the student has opted in (the first-run popup invites them to enable it).
+  autoNarrateQuizzes: { type: Boolean, default: false },
+  // Whether the one-time narration popup has been shown. Once true (whether the
+  // student chose Yes or No), the popup never appears again across any quiz surface.
+  // They can still change prefs from Settings at any time.
+  hasSeenNarrationPrompt: { type: Boolean, default: false },
+  // Account-side copy of the site language toggle (Feature 3 kept it in localStorage
+  // only). localStorage stays the fast/offline cache; this is the source of truth on
+  // login, so setting Hindi on one device shows Hindi on the next.
+  siteLanguage: { type: String, enum: ['en', 'hi'], default: 'en' },
   createdAt: { type: Date, default: Date.now }
 });
 

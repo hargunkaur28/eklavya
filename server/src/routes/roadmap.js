@@ -10,6 +10,7 @@ import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 import { normalizeGrade, normalizeSubject, subjectScopeLabel, isWrittenHeavy } from '../config/taxonomy.js';
+import { formatQuestionForTTS, normalizeTextForTTS } from '../utils/ttsNormalize.js';
 
 // Track 3: module quizzes include written questions for English subjects (essay-
 // based by nature); other subjects stay MCQ-only. A written answer "passes" at the
@@ -71,11 +72,20 @@ async function callGroqForRoadmap(grade, subject, subSubject, weakTopics, strong
   }
 
   const scope = subjectScopeLabel(subject, subSubject);
-  const prompt = `Create a customized step-by-step study roadmap for a student in Grade: "${grade}", Subject: "${scope}".
-Every day's topic MUST stay within ${scope} — do not include topics from other areas of ${subject}.
-Diagnostic assessment results:
-- Weak areas requiring extra focus: ${weakTopics.length > 0 ? weakTopics.join(', ') : 'None identified'}
-- Strong areas mastered: ${strongTopics.length > 0 ? strongTopics.join(', ') : 'General foundation'}
+  const prompt = `Create a COMPLETE study roadmap for a student in Grade: "${grade}", Subject: "${scope}".
+
+This must be a full course covering the CORE SYLLABUS of ${grade} ${scope}, taught in a sensible progression. It is NOT a remedial course on one topic.
+
+Diagnostic results — use these to WEIGHT emphasis, NOT to limit scope:
+- Weaker areas (give MORE days + deeper practice): ${weakTopics.length > 0 ? weakTopics.join(', ') : 'None identified'}
+- Stronger areas (still cover, but more briefly as revision): ${strongTopics.length > 0 ? strongTopics.join(', ') : 'General foundation'}
+
+CRITICAL SCOPE RULES:
+- The roadmap MUST span the BREADTH of ${grade} ${scope}. Do NOT make most days about the weaker areas.
+- The diagnostic only sampled a few questions — a topic marked weak from ONE wrong answer means "spend extra time here", NOT "study only this".
+- Aim for roughly 30-40% of days giving extra depth to the weaker areas; the REMAINING days must cover the other core syllabus topics of ${grade} ${scope}.
+- Every day's topic MUST stay within ${scope} — do not include topics from other areas of ${subject}.
+- Do not repeat the same topic on many days; each day should advance to new material (revisit a weak topic at most 2-3 times, with genuinely different angles).
 
 Return ONLY a valid JSON object matching this exact shape:
 {
@@ -84,12 +94,12 @@ Return ONLY a valid JSON object matching this exact shape:
     {
       "dayNumber": 1,
       "topic": "Topic Name",
-      "focus": "Clear 1-2 sentence focus detailing what to learn today and addressing weak areas.",
+      "focus": "Clear 1-2 sentence focus detailing what to learn today.",
       "estimatedMinutes": 30
     }
   ]
 }
-Generate between 10 and 15 days of structured, actionable daily study goals. Ensure dayNumber is 1, 2, 3... sequentially. No markdown formatting, raw JSON only.`;
+Generate between 10 and 15 days of structured, actionable daily study goals covering the syllabus breadth. Ensure dayNumber is 1, 2, 3... sequentially. No markdown formatting, raw JSON only.`;
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -1175,8 +1185,6 @@ router.get('/:id/day/:dayNumber/quiz/question/:qIndex/audio', authMiddleware, as
   try {
     const { id, dayNumber, qIndex } = req.params;
     const isHindi = req.query.lang === 'hi';
-    const targetLang = isHindi ? 'hi-IN' : 'en-IN';
-    const fieldName = isHindi ? 'audioQuestionHi' : 'audioQuestionEn';
     const idx = parseInt(qIndex, 10);
 
     const roadmap = await Roadmap.findById(id);
@@ -1200,26 +1208,28 @@ router.get('/:id/day/:dayNumber/quiz/question/:qIndex/audio', authMiddleware, as
     }
 
     const q = questions[idx];
+    // `useHi` degrades to false if Hindi was requested but ensureQuizHindi couldn't
+    // translate it — so voice + labels match the actual text (no English-with-Hindi-voice).
     const useHi = isHindi && q.hindiTranslated;
+    const targetLang = useHi ? 'hi-IN' : 'en-IN';
+    const fieldName = useHi ? 'audioQuestionHi' : 'audioQuestionEn';
     const stem = useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText;
     const options = (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options;
 
-    const optLabels = ['A', 'B', 'C', 'D'];
-    const optionsStr = options.map((opt, i) => `${isHindi ? 'विकल्प' : 'Option'} ${optLabels[i] || (i + 1)}: ${opt}`).join('. ');
-    const textToSpeak = `${isHindi ? 'प्रश्न' : 'Question'}: ${stem}. ${optionsStr}.`;
+    const textToSpeak = formatQuestionForTTS(stem, options, useHi ? 'hi' : 'en');
 
     const textHash = generateContentHash(textToSpeak);
     // Renumbering-proof cache key: content hash only, NOT dayNumber. The audio
     // is defined by its text; when Phase 7 renumbers a day the audio moves with
     // the subdoc and its hash is unchanged, so the cache still hits at the new number.
-    const filename = `quiz-${id}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
+    const filename = `quiz-${id}-${useHi ? 'hi' : 'en'}-${textHash}.wav`;
 
     // Self-healing disk cache check
     if (q[fieldName] && audioFileExists(filename)) {
       return res.json({ audioUrl: q[fieldName] });
     }
 
-    const lockKey = `quiz:${id}:${isHindi ? 'hi' : 'en'}:${textHash}`;
+    const lockKey = `quiz:${id}:${useHi ? 'hi' : 'en'}:${textHash}`;
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
@@ -1299,8 +1309,6 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
   try {
     const { id, dayNumber } = req.params;
     const isHindi = req.query.lang === 'hi';
-    const targetLang = isHindi ? 'hi-IN' : 'en-IN';
-    const fieldName = isHindi ? 'audioContentHi' : 'audioContentEn';
 
     const roadmap = await Roadmap.findById(id);
     if (!roadmap) {
@@ -1316,8 +1324,11 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Day not found in roadmap.' });
     }
 
-    // Determine text to speak
-    let textToSpeak = isHindi ? (targetDay.translatedHindiContent || targetDay.content) : targetDay.content;
+    // Determine text to speak. `effectiveHindi` degrades to false if Hindi is
+    // requested but no Hindi text can be produced (translate failed) — so we never
+    // speak English content with a Hindi voice.
+    let effectiveHindi = isHindi;
+    let textToSpeak = isHindi ? (targetDay.translatedHindiContent || '') : targetDay.content;
 
     // If Hindi content not translated yet and requested in Hindi, generate translation first
     if (isHindi && !targetDay.hindiContentTranslated && targetDay.content) {
@@ -1330,6 +1341,16 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
       }
     }
 
+    textToSpeak = normalizeTextForTTS(textToSpeak, effectiveHindi ? 'hi' : 'en');
+    if (isHindi && (!textToSpeak || !textToSpeak.trim())) {
+      console.warn(`day audio ${id}/${dayNumber}: no Hindi content (translation failed?) — narrating English instead.`);
+      effectiveHindi = false;
+      textToSpeak = targetDay.content;
+    }
+
+    const targetLang = effectiveHindi ? 'hi-IN' : 'en-IN';
+    const fieldName = effectiveHindi ? 'audioContentHi' : 'audioContentEn';
+
     if (!textToSpeak || textToSpeak.trim().length === 0) {
       return res.status(400).json({ error: 'No content available to synthesize.' });
     }
@@ -1338,7 +1359,7 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     // Renumbering-proof cache key: content hash only, NOT dayNumber (see the quiz
     // audio endpoint). Day content moves with the subdoc on a Phase 7 insertion,
     // so the cached audio stays valid at the day's new number.
-    const filename = `roadmap-${id}-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;
+    const filename = `roadmap-${id}-${effectiveHindi ? 'hi' : 'en'}-${textHash}.wav`;
 
     // Self-healing disk cache check
     if (targetDay[fieldName] && audioFileExists(filename)) {

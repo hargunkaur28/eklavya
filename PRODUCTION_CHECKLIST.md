@@ -1,9 +1,14 @@
 ## Pre-Production Checklist / Flagged for Later
 
+### External Paid API & Cost Inventory
+- **OpenAI TTS (`gpt-4o-mini-tts`) — Primary TTS provider.** Cost: $0.015 per 1,000 characters (~$0.0003 per narrated question).
+- **Sarvam AI (Bulbul) — Fallback TTS provider**, used when OpenAI TTS errors. Also remains primary for Translation and STT (unchanged — this swap applies to TTS only, not translation or speech-to-text).
+- **Groq AI (Llama/Mixtral LLM & English STT):** Free tier / Paid key.
+
 ### Sarvam / Translation & TTS
 - [ ] Add paid Sarvam API keys (currently on free tier, exhausted
       during dev testing — running on fallback: Groq translation +
-      Web Speech TTS)
+      OpenAI Hindi TTS / Web Speech English TTS)
 - [ ] Once paid keys are in: verify the PRIMARY Sarvam translate + TTS
       path end-to-end post-schema-changes (translatedHindiQuestionText,
       subtopicsHindi, audioQuestionEn/Hi) — only fallback path has been
@@ -223,3 +228,10 @@ JEE/NEET "track" remodel above — do not conflate.
       as the durable rollback record + audit trail of exactly which docs were
       grandfathered. `--rollback` depends on it; a fresh clone must retain it to be
       able to reverse the migration that already ran in production.
+
+### Voice Narration & Voice I/O — accepted design decisions & costs
+- [ ] **OpenAI TTS cost tracking (`gpt-4o-mini-tts`):** Hindi TTS uses OpenAI as the primary fallback when Sarvam credits/quota fail. Model cost is ~$0.015 / 1k characters. Monitor OpenAI API usage on the dashboard if Hindi traffic grows significantly.
+- [ ] **Groq TTS non-support:** Groq Orpheus/PlayAI TTS only supports English and Arabic — it cannot speak Devanagari/Hindi. Groq TTS is explicitly excluded from the Hindi fallback path.
+- [ ] **English vs Hindi fallback chain asymmetry:** English uses `Sarvam -> Web Speech` (no OpenAI fallback). Hindi uses `Sarvam -> OpenAI TTS -> Web Speech` (since Web Speech Hindi voices vary wildly across operating systems).
+- [ ] **Mentor narration is manual-only:** Mentor assistant replies do NOT auto-narrate on load, unlike quiz questions. Auto-playing variable-length conversational replies would be intrusive. The speaker button on Mentor messages is manual-trigger only.
+- [ ] **Autoplay policy graceful degradation:** Browsers blocking programmatic audio playback (`NotAllowedError`) cause `SpeakerButton` to enter an `.autoplay-blocked` pulsing highlight state ("Tap to listen") rather than throwing unhandled errors or silently failing.

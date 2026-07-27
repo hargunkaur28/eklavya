@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { User, Mail, Lock, Save, Loader2, ShieldAlert, KeyRound, Camera, Trash2 } from 'lucide-react';
+import { User, Mail, Lock, Save, Loader2, ShieldAlert, KeyRound, Camera, Trash2, Volume2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useNavigate } from 'react-router-dom';
@@ -11,7 +11,7 @@ import Avatar from '../components/Avatar.jsx';
 // requires the current password and is double-entered as a typo guard (NOT
 // verification — there is no email-verification system).
 export default function ProfilePage() {
-  const { user, updateProfile, uploadProfilePhoto, removeProfilePhoto } = useAuth();
+  const { user, updateProfile, updatePreferences, uploadProfilePhoto, removeProfilePhoto } = useAuth();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
@@ -25,7 +25,43 @@ export default function ProfilePage() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Narration prefs (account-level). Locally optimistic + persisted via updatePreferences.
+  const [narrationPref, setNarrationPref] = useState(user?.narrationLanguagePref || 'hindi');
+  const [autoNarrate, setAutoNarrate] = useState(!!user?.autoNarrateQuizzes);
+  const [prefBusy, setPrefBusy] = useState(false);
+
   if (!user) return null;
+
+  const savePref = async (patch, revert) => {
+    setError(''); setSuccess(''); setPrefBusy(true);
+    try {
+      await updatePreferences(patch);
+      setSuccess(t('auth.prefSaved'));
+    } catch (err) {
+      revert();
+      setError(err.message || t('auth.prefError'));
+    } finally {
+      setPrefBusy(false);
+    }
+  };
+
+  const onNarrationPref = (val) => {
+    const prev = narrationPref;
+    setNarrationPref(val);
+    savePref({ narrationLanguagePref: val }, () => setNarrationPref(prev));
+  };
+
+  const onToggleAutoNarrate = () => {
+    const next = !autoNarrate;
+    setAutoNarrate(next);
+    savePref({ autoNarrateQuizzes: next }, () => setAutoNarrate(!next));
+  };
+
+  const NARRATION_OPTIONS = [
+    { value: 'hindi', label: t('auth.narrationHindi'), hint: t('auth.narrationHindiHint') },
+    { value: 'english', label: t('auth.narrationEnglish'), hint: t('auth.narrationEnglishHint') },
+    { value: 'match-toggle', label: t('auth.narrationMatch'), hint: t('auth.narrationMatchHint') }
+  ];
 
   const onPickPhoto = () => fileInputRef.current?.click();
 
@@ -190,6 +226,46 @@ export default function ProfilePage() {
         <button type="button" className="profile-change-password-btn" onClick={() => navigate('/change-password')}>
           <KeyRound size={16} /> {t('auth.profileChangePasswordLink')}
         </button>
+
+        {/* Narration preferences (student-only; parents/admins have no quiz flows) */}
+        {user.role === 'student' && (
+          <div className="narration-settings">
+            <div className="narration-settings-head">
+              <Volume2 size={18} />
+              <h3>{t('auth.narrationTitle')}</h3>
+            </div>
+
+            <div className="narration-field">
+              <span className="narration-field-label">{t('auth.narrationLangLabel')}</span>
+              <div className="narration-radio-group">
+                {NARRATION_OPTIONS.map((opt) => (
+                  <label key={opt.value} className={`narration-radio ${narrationPref === opt.value ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="narrationLanguagePref"
+                      value={opt.value}
+                      checked={narrationPref === opt.value}
+                      onChange={() => onNarrationPref(opt.value)}
+                      disabled={prefBusy}
+                    />
+                    <span className="narration-radio-body">
+                      <strong>{opt.label}</strong>
+                      <small>{opt.hint}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <label className="narration-toggle">
+              <input type="checkbox" checked={autoNarrate} onChange={onToggleAutoNarrate} disabled={prefBusy} />
+              <span>
+                <strong>{t('auth.autoNarrateLabel')}</strong>
+                <small>{t('auth.autoNarrateHint')}</small>
+              </span>
+            </label>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -37,10 +37,21 @@ if (process.env.ADMIN_EMAIL) {
   }
 }
 
+// Narration feature: OpenAI is the HINDI TTS fallback when Sarvam is down/out of
+// quota (Groq TTS can't do Hindi). NOT required to boot — but warn loudly, since
+// without it Hindi narration silently degrades to lower-quality browser TTS.
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('WARNING: OPENAI_API_KEY is not set — Hindi TTS will have NO server-side fallback if Sarvam fails (it will degrade to browser Web Speech). Set OPENAI_API_KEY to enable the OpenAI Hindi fallback.');
+}
+
+import helmet from 'helmet';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/project_eklavya';
 
@@ -57,11 +68,31 @@ if (process.env.FRONTEND_URL) {
   allowedOrigins.push(...prodOrigins);
 }
 
+// Section 4 Security Hardening: Helmet HTTP headers
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// Section 5 Load Resilience: Response payload compression
+app.use(compression());
+
+// Section 4 Security Hardening: Global rate limiter on all /api/* routes (200 req / 15 min per IP)
+const globalApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { error: 'Too many requests from this IP. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => process.env.SKIP_RATE_LIMIT === 'true' || req.path === '/health'
+});
+app.use('/api', globalApiLimiter);
+
 app.use(cors({
   origin: allowedOrigins,
   credentials: true
 }));
-app.use(express.json());
+
+// Section 4 Security Hardening: Request body size limits
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Serve uploads directory statically for audio files
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
@@ -113,19 +144,22 @@ function gracefulShutdown(signal) {
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
-// MongoDB Connection & Server Start
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('Successfully connected to MongoDB.');
-    console.log(`Admin panel: ${process.env.ADMIN_EMAIL ? 'ENABLED' : 'disabled'}`);
-    serverInstance = app.listen(PORT, () => {
-      console.log(`Project Eklavya Server running on port ${PORT}`);
+const isDirectRun = process.argv[1] && (process.argv[1].endsWith('server.js') || process.argv[1].includes('server.js'));
+
+if (isDirectRun) {
+  mongoose.connect(MONGODB_URI, { maxPoolSize: 50 })
+    .then(() => {
+      console.log('Successfully connected to MongoDB.');
+      console.log(`Admin panel: ${process.env.ADMIN_EMAIL ? 'ENABLED' : 'disabled'}`);
+      serverInstance = app.listen(PORT, () => {
+        console.log(`Project Eklavya Server running on port ${PORT}`);
+      });
+    })
+    .catch((err) => {
+      console.warn('MongoDB connection warning:', err.message);
+      console.log('Starting server in fallback mode (in-memory/demo mode ready)...');
+      serverInstance = app.listen(PORT, () => {
+        console.log(`Project Eklavya Server running on port ${PORT}`);
+      });
     });
-  })
-  .catch((err) => {
-    console.warn('MongoDB connection warning:', err.message);
-    console.log('Starting server in fallback mode (in-memory/demo mode ready)...');
-    serverInstance = app.listen(PORT, () => {
-      console.log(`Project Eklavya Server running on port ${PORT}`);
-    });
-  });
+}

@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
-import { Plus, Send, Trash2, MessageSquare, Loader2 } from 'lucide-react';
+import { Plus, Send, Trash2, MessageSquare, Loader2, Mic, MicOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
+import SpeakerButton from '../components/SpeakerButton.jsx';
+import { useSpeechInput } from '../hooks/useSpeechInput.js';
 
 const AVATAR_SRC = '/chatbot-avatar.png'; // same asset as ChatWidget
 
@@ -12,7 +14,7 @@ const AVATAR_SRC = '/chatbot-avatar.png'; // same asset as ChatWidget
 // properly) and, for a freshly-received reply (animate), reveals it progressively
 // like typing. Reloaded history renders fully at once (animate=false). Reveal is
 // chunked and scaled to length so long answers still finish in a couple seconds.
-function AssistantContent({ content, animate, onTick }) {
+function AssistantContent({ content, animate, onTick, onComplete }) {
   const [shown, setShown] = useState(animate ? '' : content);
   useEffect(() => {
     if (!animate) { setShown(content); return; }
@@ -20,7 +22,7 @@ function AssistantContent({ content, animate, onTick }) {
     const step = Math.max(4, Math.ceil(content.length / 150));
     const id = setInterval(() => {
       i += step;
-      if (i >= content.length) { setShown(content); clearInterval(id); }
+      if (i >= content.length) { setShown(content); clearInterval(id); onComplete?.(); }
       else setShown(content.slice(0, i));
       onTick?.();
     }, 16);
@@ -34,7 +36,7 @@ function AssistantContent({ content, animate, onTick }) {
 // left = conversation list, right = message thread. Single-shot request pattern
 // (matching ChatWidget — POST then render the full reply), student-only.
 export default function MentorPage() {
-  const { user, authFetch } = useAuth();
+  const { user, authFetch, activeRoadmap } = useAuth();
   const { language } = useLanguage();
   const t = translations[language]?.dashboard || translations.en.dashboard;
 
@@ -46,8 +48,23 @@ export default function MentorPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [activeSpeechMsgIndex, setActiveSpeechMsgIndex] = useState(-1);
+  const lastNarratedMsgIdRef = useRef(null);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const scrollRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  // Phase 4: STT integration using shared hook
+  const { isRecording, hasMicSupport, recordingNotice, toggleRecording, stopRecording } =
+    useSpeechInput({
+      language,
+      token: user?.token,
+      currentText: input,
+      onTranscript: (text) => {
+        setInput(text);
+        textareaRef.current?.focus();
+      }
+    });
 
   const scrollToBottom = () => {
     requestAnimationFrame(() => {
@@ -119,9 +136,11 @@ export default function MentorPage() {
 
   const sendMessage = async (e) => {
     e?.preventDefault();
+    if (isRecording) stopRecording();
     const text = input.trim();
     if (!text || sending) return;
     setError('');
+    setActiveSpeechMsgIndex(-1);
     setSending(true);
     setInput('');
 
@@ -143,7 +162,7 @@ export default function MentorPage() {
 
       const res = await authFetch(`/mentor/conversations/${convId}/message`, {
         method: 'POST',
-        body: JSON.stringify({ message: text })
+        body: JSON.stringify({ message: text, language })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'send failed');
@@ -233,7 +252,29 @@ export default function MentorPage() {
                 {m.role === 'assistant' && avatar('mentor-msg-avatar')}
                 <div className="mentor-bubble">
                   {m.role === 'assistant'
-                    ? <AssistantContent content={m.content} animate={m.animate} onTick={scrollToBottom} />
+                    ? <>
+                        <AssistantContent
+                          content={m.content}
+                          animate={m.animate}
+                          onTick={scrollToBottom}
+                          onComplete={() => {
+                            const msgId = m.id || `msg-${i}`;
+                            if (user?.autoNarrateQuizzes !== false && lastNarratedMsgIdRef.current !== msgId) {
+                              lastNarratedMsgIdRef.current = msgId;
+                              setActiveSpeechMsgIndex(i);
+                            }
+                          }}
+                        />
+                        <div className="mentor-bubble-actions">
+                          <SpeakerButton
+                            ttsText={m.content}
+                            fallbackText={m.content}
+                            subject={activeRoadmap?.subject || ''}
+                            autoPlay={activeSpeechMsgIndex === i}
+                            size={15}
+                          />
+                        </div>
+                      </>
                     : m.content}
                 </div>
               </div>
@@ -247,10 +288,22 @@ export default function MentorPage() {
           )}
         </div>
 
+        {recordingNotice && <div className="mentor-recording-notice">{recordingNotice}</div>}
         {error && <div className="mentor-error">{error}</div>}
 
         <form className="mentor-input" onSubmit={sendMessage}>
+          {hasMicSupport && (
+            <button
+              type="button"
+              className={`mentor-mic-btn ${isRecording ? 'recording' : ''}`}
+              onClick={toggleRecording}
+              title={isRecording ? 'Stop recording' : 'Start voice input'}
+            >
+              {isRecording ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
+          )}
           <textarea
+            ref={textareaRef}
             rows={1}
             placeholder={t.mentorPlaceholder}
             value={input}

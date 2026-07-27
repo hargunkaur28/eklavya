@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { useLanguage } from './LanguageContext.jsx';
 
 const AuthContext = createContext(null);
 
@@ -70,6 +71,22 @@ export function AuthProvider({ children }) {
   // Phase 4: a parent session that still holds its temporary password. While true,
   // the app forces the change-password screen (mirrors the server-side gate).
   const [mustChangePassword, setMustChangePassword] = useState(false);
+
+  // Narration feature: the account's siteLanguage is the source of truth on login;
+  // localStorage/LanguageContext is the fast-path cache. `lastSyncedLang` marks the
+  // value we last reconciled with the account so the toggle-persist effect below
+  // doesn't echo a hydration-set value straight back to the server.
+  const { language, setLanguage } = useLanguage();
+  const lastSyncedLang = useRef(null);
+
+  // Account value WINS on hydrate: pull siteLanguage from the account onto the local
+  // toggle (student sessions only — parents/admins have no quiz flows).
+  const applyAccountLanguage = useCallback((u) => {
+    if (u && u.role === 'student' && (u.siteLanguage === 'en' || u.siteLanguage === 'hi')) {
+      lastSyncedLang.current = u.siteLanguage;
+      setLanguage((prev) => (prev !== u.siteLanguage ? u.siteLanguage : prev));
+    }
+  }, [setLanguage]);
 
   // Keep the selected roadmap and the roadmaps list in sync when a component
   // updates the active roadmap (e.g. after toggling a day complete).
@@ -146,6 +163,7 @@ export function AuthProvider({ children }) {
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
+        applyAccountLanguage(data.user); // account siteLanguage wins on refresh
         setMustChangePassword(!!data.mustChangePassword);
         await refreshRoadmap();
       } else {
@@ -161,11 +179,32 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, [authFetch, refreshRoadmap]);
+  }, [authFetch, refreshRoadmap, applyAccountLanguage]);
 
   useEffect(() => {
     refreshUser();
   }, [refreshUser]);
+
+  // PATCH account-level narration/voice prefs and mirror them onto local user state.
+  const updatePreferences = useCallback(async (patch) => {
+    const res = await authFetch('/auth/preferences', { method: 'PATCH', body: JSON.stringify(patch) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to update preferences.');
+    setUser((prev) => (prev ? { ...prev, ...data.preferences } : prev));
+    return data.preferences;
+  }, [authFetch]);
+
+  // Persist a site-language TOGGLE back to the account (student only). Skips the
+  // hydration-set value (tracked in lastSyncedLang) so only genuine user changes PATCH.
+  useEffect(() => {
+    if (!user || user.role !== 'student') return;
+    if (lastSyncedLang.current === null) { lastSyncedLang.current = language; return; }
+    if (language === lastSyncedLang.current) return;
+    lastSyncedLang.current = language;
+    authFetch('/auth/preferences', { method: 'PATCH', body: JSON.stringify({ siteLanguage: language }) })
+      .then((r) => { if (r && r.ok) setUser((prev) => (prev ? { ...prev, siteLanguage: language } : prev)); })
+      .catch(() => { /* offline / non-critical — localStorage already holds it */ });
+  }, [language, user, authFetch]);
 
   const login = async (email, password, rememberMe = true) => {
     const res = await fetch(`${API_BASE}/auth/login`, {
@@ -182,6 +221,7 @@ export function AuthProvider({ children }) {
     storeToken(data.token, rememberMe);
     setToken(data.token);
     setUser(data.user);
+    applyAccountLanguage(data.user); // account siteLanguage wins on login
     setMustChangePassword(!!data.mustChangePassword); // Phase 4
 
     let roadmap = null;
@@ -363,6 +403,7 @@ export function AuthProvider({ children }) {
         adminPrecheck,
         changePassword,
         updateProfile,
+        updatePreferences,
         updateAdminCredentials,
         uploadProfilePhoto,
         removeProfilePhoto,

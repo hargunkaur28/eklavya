@@ -28,7 +28,8 @@ router.use(authMiddleware, requireRole('student'));
 // Mentor's system prompt — paragraph-level teaching (not the chatbot's one-liners),
 // scoped to academic help, reusing siteKnowledge grounding + the chatbot's safety
 // posture (no fabrication, decline off-topic/harmful).
-function buildMentorSystemPrompt(studentName) {
+function buildMentorSystemPrompt(studentName, language = 'en') {
+  const isHindi = language === 'hi' || language === 'hi-IN';
   let p = `You are "Mentor", a patient, knowledgeable personal AI tutor on Project Eklavya, an educational platform for Indian students (Class 10 Science, Class 11 JEE foundation, Class 12 NEET Biology, and related school subjects).
 
 Teach thoroughly: explain concepts step by step with worked examples, and structure longer answers into clear paragraphs or short lists. Unlike a quick chat widget, you should give complete, teaching-quality explanations — depth is welcome when it helps understanding.
@@ -42,7 +43,12 @@ Rules:
 - Never fabricate URLs, citations, video titles, or external links.
 - If you are unsure, or a question falls outside these subjects, say so honestly rather than guessing.
 - Be warm and encouraging, like a dedicated personal tutor.`;
-  if (studentName) p += `\n\nThe student's name is ${studentName}. Address them warmly by name when it feels natural.`;
+
+  if (isHindi) {
+    p += `\n\nCRITICAL LANGUAGE REQUIREMENT: The student has selected Hindi as their language. You MUST respond entirely in clear, natural, fluent Hindi (using Devanagari script). Write all explanations, concepts, worked examples, and text in natural Hindi. Do not respond in English.`;
+  }
+
+  if (studentName) p += `\n\nThe student's name is ${studentName}. Keep their name in its original Latin script spelling '${studentName}' (e.g. "नमस्ते ${studentName}!"). Do not transliterate or translate proper student names into Devanagari script. You may address them by name occasionally or in an initial greeting, but DO NOT repeat their name in every response or sign-off. Keep conversation natural, friendly, and unforced.`;
   return p;
 }
 
@@ -133,7 +139,7 @@ router.post('/conversations/:id/message', async (req, res) => {
       return res.status(429).json({ error: 'You\'re sending messages too quickly. Please wait a moment.' });
     }
 
-    const { message } = req.body || {};
+    const { message, language = 'en' } = req.body || {};
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'Message is required.' });
     }
@@ -155,7 +161,7 @@ router.post('/conversations/:id/message', async (req, res) => {
     } catch { /* non-fatal */ }
 
     const groqMessages = [
-      { role: 'system', content: buildMentorSystemPrompt(studentName) },
+      { role: 'system', content: buildMentorSystemPrompt(studentName, language) },
       ...buildContext(convo.messages),
       { role: 'user', content: message.trim() }
     ];

@@ -243,6 +243,7 @@ export default function DiagnosticReview() {
                   </h4>
                   <SpeakerButton
                     audioEndpoint={`/diagnostic/${result._id}/question/${idx}/audio?lang=${language}`}
+                    subject={result.subject}
                     size={16}
                   />
                 </div>
@@ -288,6 +289,7 @@ export default function DiagnosticReview() {
                     </div>
                     <SpeakerButton
                       fetchPayload={{ questionText: `${language === 'hi' ? 'व्याख्या' : 'Explanation'}: ${displayExp}`, options: [], language }}
+                      subject={result.subject}
                       size={15}
                     />
                   </div>

@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { synthesizeSpeechOpenAI } from './openaiTts.js';
+import { normalizeTextForTTS } from './ttsNormalize.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,7 +114,9 @@ export function combineWavBase64(b64Array) {
 }
 
 // ── Text Chunking Helper (Strictly < 450 chars per call for Sarvam Bulbul API) ──
-function splitTextIntoChunks(text, maxLength = 450) {
+// Exported so the OpenAI Hindi-TTS fallback can reuse the same sentence-aware split
+// (at its own, larger max length).
+export function splitTextIntoChunks(text, maxLength = 450) {
   if (!text || typeof text !== 'string') return [];
   if (text.length <= maxLength) return [text];
 
@@ -154,15 +158,11 @@ function splitTextIntoChunks(text, maxLength = 450) {
   return chunks;
 }
 
-// ── Main Sarvam Bulbul Speech Synthesizer with In-Flight Deduplication & Parallel Chunking ──
+// ── Main Speech Synthesizer with OpenAI Primary & Sarvam Fallback ──
 export async function synthesizeSpeech(text, targetLang = 'hi-IN', lockKey = null) {
   if (!text || typeof text !== 'string' || text.trim().length === 0) return null;
-
-  const key = process.env.SARVAM_API_KEY;
-  if (!key || key === 'sarvam_demo_key') {
-    console.warn('Sarvam API key not set or demo key');
-    return null;
-  }
+  // Ensure universal math symbol normalization runs before sending to ANY provider
+  text = normalizeTextForTTS(text, targetLang);
 
   const dedupKey = lockKey || `${targetLang}:${crypto.createHash('md5').update(text).digest('hex')}`;
 
@@ -172,59 +172,74 @@ export async function synthesizeSpeech(text, targetLang = 'hi-IN', lockKey = nul
   }
 
   const synthesisPromise = (async () => {
+    // 1. PRIMARY PROVIDER: OpenAI TTS (gpt-4o-mini-tts)
     try {
-      const normalizedLang = targetLang === 'hi' || targetLang === 'hi-IN' ? 'hi-IN' : 'en-IN';
-      const textChunks = splitTextIntoChunks(text);
+      console.log('[TTS Provider] Attempting Primary: OpenAI TTS (gpt-4o-mini-tts)...');
+      const openaiBuf = await synthesizeSpeechOpenAI(text);
+      if (openaiBuf) {
+        console.log('[TTS Provider] Primary OpenAI TTS succeeded.');
+        return openaiBuf;
+      }
+      console.warn('[TTS Provider] Primary OpenAI TTS returned null/failed — falling back to Sarvam.');
+    } catch (err) {
+      console.warn('[TTS Provider] Primary OpenAI TTS error:', err.message);
+    }
 
-      // Execute Sarvam API requests in parallel via Promise.all
-      const chunkPromises = textChunks.map(async (chunk, idx) => {
-        try {
-          const response = await fetch('https://api.sarvam.ai/text-to-speech', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'api-subscription-key': key
-            },
-            body: JSON.stringify({
-              inputs: [chunk],
-              target_language_code: normalizedLang,
-              speaker: 'kavya',
-              model: 'bulbul:v3'
-            })
-          });
+    // 2. SECONDARY FALLBACK: Sarvam AI (Bulbul)
+    const key = process.env.SARVAM_API_KEY;
+    const sarvamUsable = !!key && key !== 'sarvam_demo_key';
 
-          if (!response.ok) {
-            console.warn(`Sarvam TTS API chunk ${idx} failed with status ${response.status}`);
+    if (sarvamUsable) {
+      try {
+        console.log('[TTS Provider] Attempting Secondary Fallback: Sarvam AI (Bulbul)...');
+        const normalizedLang = targetLang === 'hi' || targetLang === 'hi-IN' ? 'hi-IN' : 'en-IN';
+        const textChunks = splitTextIntoChunks(text);
+
+        const chunkPromises = textChunks.map(async (chunk, idx) => {
+          try {
+            const response = await fetch('https://api.sarvam.ai/text-to-speech', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'api-subscription-key': key
+              },
+              body: JSON.stringify({
+                inputs: [chunk],
+                target_language_code: normalizedLang,
+                speaker: 'kavya',
+                model: 'bulbul:v3'
+              })
+            });
+
+            if (!response.ok) return null;
+            const data = await response.json();
+            return data.audios && data.audios[0] ? data.audios[0] : null;
+          } catch (err) {
             return null;
           }
+        });
 
-          const data = await response.json();
-          return data.audios && data.audios[0] ? data.audios[0] : null;
-        } catch (err) {
-          console.warn(`Sarvam TTS chunk ${idx} fetch error:`, err.message);
-          return null;
+        const b64Results = await Promise.all(chunkPromises);
+        const b64Audios = b64Results.filter(Boolean);
+
+        if (b64Audios.length === textChunks.length) {
+          console.log('[TTS Provider] Secondary Sarvam TTS succeeded.');
+          const combinedB64 = combineWavBase64(b64Audios);
+          return Buffer.from(combinedB64, 'base64');
         }
-      });
-
-      const b64Results = await Promise.all(chunkPromises);
-      const b64Audios = b64Results.filter(Boolean);
-
-      // Ensure all chunks synthesized successfully
-      if (b64Audios.length !== textChunks.length) {
-        console.warn(`Parallel chunk synthesis incomplete: ${b64Audios.length}/${textChunks.length} succeeded`);
-        return null;
+        console.warn('[TTS Provider] Secondary Sarvam TTS incomplete/failed — degrading to client Web Speech API.');
+      } catch (err) {
+        console.warn('[TTS Provider] Secondary Sarvam TTS error:', err.message);
       }
-
-      const combinedB64 = combineWavBase64(b64Audios);
-      return Buffer.from(combinedB64, 'base64');
-    } catch (error) {
-      console.warn('synthesizeSpeech error:', error.message);
-      return null;
+    } else {
+      console.warn('[TTS Provider] Sarvam API key not set or invalid — degrading to client Web Speech API.');
     }
+
+    // 3. FINAL FALLBACK: null signals frontend to use browser Web Speech API
+    return null;
   })();
 
   inFlightPromises.set(dedupKey, synthesisPromise);
-
   try {
     return await synthesisPromise;
   } finally {

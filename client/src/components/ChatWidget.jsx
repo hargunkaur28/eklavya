@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Bot, X, Send, Mic, MicOff, Volume2, VolumeX, ExternalLink, Sparkles } from 'lucide-react';
+import { useSpeechInput } from '../hooks/useSpeechInput.js';
+import { resolveNarrationLang } from '../utils/narration.js';
 import './ChatWidget.css';
 
 // Swappable avatar image path — drop a real avatar at this path and it works with zero code changes.
@@ -42,35 +44,31 @@ export default function ChatWidget() {
 
   // Voice feature support (detected on mount)
   const [hasSpeechSynthesis, setHasSpeechSynthesis] = useState(false);
-  const [hasMicSupport, setHasMicSupport] = useState(false);
 
   // Speaker state
   const [playingMsgId, setPlayingMsgId] = useState(null);
   const [speakerLoading, setSpeakerLoading] = useState(null);
   const currentAudioRef = useRef(null);
 
-  // Mic state
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingNotice, setRecordingNotice] = useState('');
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const recordingTimerRef = useRef(null);
-
   // Refs
-  const recognitionRef = useRef(null);
-  const initialInputRef = useRef('');
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const revealTimerRef = useRef(null);
+  const lastNarratedMsgIdRef = useRef(null);
+
+  // Phase 4: STT via shared hook (replaces ~130 lines of inline recording logic).
+  const { isRecording, hasMicSupport, recordingNotice, toggleRecording, stopRecording } =
+    useSpeechInput({
+      language,
+      token,
+      apiBase: API_BASE,
+      currentText: inputText,
+      onTranscript: (text) => { setInputText(text); inputRef.current?.focus(); }
+    });
 
   // ── Feature Detection on Mount ──
   useEffect(() => {
     setHasSpeechSynthesis('speechSynthesis' in window);
-
-    const hasRecognition = typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
-    if (hasRecognition || navigator.mediaDevices?.getUserMedia) {
-      setHasMicSupport(true);
-    }
 
     // Unread dot — distinct key from auth token ('eklavya_chat_opened')
     try {
@@ -82,10 +80,6 @@ export default function ChatWidget() {
 
     return () => {
       if (revealTimerRef.current) clearInterval(revealTimerRef.current);
-      if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current);
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch {}
-      }
     };
   }, []);
 
@@ -145,11 +139,12 @@ export default function ChatWidget() {
       stopRecording();
     }
 
-    // Clear any recording notice
-    setRecordingNotice('');
+    // Clear any recording notice — handled inside hook, but defensive clear here.
+    // (The hook clears on startRecording, not on external send.)
 
     // Add user message
     const userMsgId = Date.now() + '-user';
+    stopAudio();
     const newUserMsg = { id: userMsgId, role: 'user', content: text };
     setMessages(prev => [...prev, newUserMsg]);
     setInputText('');
@@ -211,9 +206,12 @@ export default function ChatWidget() {
       setMessages(prev => [...prev, botMsg]);
       setIsLoading(false);
 
-      // Progressive reveal, then show resources/nav after text completes
+      // Progressive reveal, then show resources/nav and auto-narrate after text completes
       revealText(botMsgId, data.reply || 'I\'m not sure how to respond to that.', () => {
-        // After text reveal, mark as fully revealed (resources/nav will render)
+        if (user?.autoNarrateQuizzes !== false && lastNarratedMsgIdRef.current !== botMsgId) {
+          lastNarratedMsgIdRef.current = botMsgId;
+          handleSpeak(botMsgId, data.reply || '');
+        }
       });
 
     } catch (err) {
@@ -232,7 +230,7 @@ export default function ChatWidget() {
       }]);
       setIsLoading(false);
     }
-  }, [inputText, isLoading, messages, language, token, activeRoadmap, revealText]);
+  }, [inputText, isLoading, messages, language, token, activeRoadmap, revealText, isRecording, stopRecording]);
 
   // ── Keyboard Handler ──
   const handleKeyDown = useCallback((e) => {
@@ -271,10 +269,16 @@ export default function ChatWidget() {
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
+      const speakLang = resolveNarrationLang({
+        subject: activeRoadmap?.subject,
+        pref: user?.narrationLanguagePref,
+        siteLang: language
+      });
+
       const res = await fetch(`${API_BASE}/chat/tts`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ text, language })
+        body: JSON.stringify({ text, language: speakLang })
       });
 
       if (res.ok) {
@@ -335,172 +339,7 @@ export default function ChatWidget() {
     }
   }, [playingMsgId, stopAudio, token, language]);
 
-  // ── Microphone (STT / Live Dictation) ──
-  const stopRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      recognitionRef.current = null;
-    }
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      mediaRecorderRef.current = null;
-    }
-
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-
-    setIsRecording(false);
-  }, []);
-
-  const startRecording = useCallback(async () => {
-    setRecordingNotice('');
-
-    // Capture text that was already typed in input box before mic click
-    initialInputRef.current = inputText;
-
-    const SpeechRecognition = typeof window !== 'undefined'
-      ? (window.SpeechRecognition || window.webkitSpeechRecognition)
-      : null;
-
-    // ── Primary Path: Live Word-by-Word SpeechRecognition ──
-    // Types text live into the textbox as the user speaks ("hello" "I'm" "shine")
-    if (SpeechRecognition) {
-      try {
-        const recognition = new SpeechRecognition();
-        recognition.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.maxAlternatives = 1;
-
-        recognition.onresult = (event) => {
-          let liveTranscript = '';
-          for (let i = 0; i < event.results.length; i++) {
-            liveTranscript += event.results[i][0].transcript;
-          }
-
-          const base = initialInputRef.current.trim();
-          const combined = base ? `${base} ${liveTranscript}` : liveTranscript;
-          setInputText(combined);
-          inputRef.current?.focus();
-        };
-
-        recognition.onerror = (e) => {
-          if (e.error === 'no-speech' || e.error === 'aborted') return;
-          console.warn('SpeechRecognition error:', e.error);
-          if (e.error === 'not-allowed') {
-            setRecordingNotice(
-              language === 'hi'
-                ? 'माइक्रोफ़ोन अनुमति अस्वीकृत की गई — कृपया टाइप करें'
-                : 'Microphone permission denied — please type your message'
-            );
-            setTimeout(() => setRecordingNotice(''), 4000);
-          }
-          setIsRecording(false);
-        };
-
-        recognition.onend = () => {
-          setIsRecording(false);
-          recognitionRef.current = null;
-        };
-
-        recognition.start();
-        recognitionRef.current = recognition;
-        setIsRecording(true);
-
-        // Auto-stop after 45 seconds
-        recordingTimerRef.current = setTimeout(() => {
-          stopRecording();
-        }, 45000);
-
-        return;
-      } catch (err) {
-        console.warn('SpeechRecognition start error, falling back to MediaRecorder + Sarvam:', err);
-      }
-    }
-
-    // ── Fallback Path: MediaRecorder + Sarvam STT Backend ──
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
-      });
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-
-        try {
-          const formData = new FormData();
-          formData.append('audio', audioBlob, 'recording.webm');
-          const headers = {};
-          if (token) headers['Authorization'] = `Bearer ${token}`;
-
-          const res = await fetch(`${API_BASE}/chat/stt`, {
-            method: 'POST',
-            headers,
-            body: formData
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && data.transcript) {
-              const base = initialInputRef.current.trim();
-              setInputText(base ? `${base} ${data.transcript}` : data.transcript);
-              inputRef.current?.focus();
-              return;
-            }
-          }
-        } catch (err) {
-          console.warn('Sarvam STT fallback failed:', err);
-        }
-
-        setRecordingNotice(
-          language === 'hi'
-            ? 'आवाज़ इनपुट प्राप्त नहीं हुआ — कृपया टाइप करें'
-            : "Voice input could not be transcribed — please type your message"
-        );
-        setTimeout(() => setRecordingNotice(''), 4000);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-
-      recordingTimerRef.current = setTimeout(() => {
-        stopRecording();
-      }, 30000);
-
-    } catch (err) {
-      console.warn('Mic access denied:', err);
-      setRecordingNotice(
-        language === 'hi'
-          ? 'माइक्रोफ़ोन अनुमति अस्वीकृत की गई — कृपया टाइप करें'
-          : "Microphone access was denied — please type your message"
-      );
-      setTimeout(() => setRecordingNotice(''), 4000);
-      setIsRecording(false);
-    }
-  }, [inputText, language, token, stopRecording]);
-
-  const handleMicClick = useCallback(() => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  }, [isRecording, stopRecording, startRecording]);
 
   // ── Navigate Handler ──
   const handleNavigate = useCallback((route) => {
@@ -691,7 +530,7 @@ export default function ChatWidget() {
           {hasMicSupport && (
             <button
               className={`chat-mic-btn ${isRecording ? 'chat-mic-btn--recording' : ''}`}
-              onClick={handleMicClick}
+              onClick={toggleRecording}
               aria-label={isRecording ? 'Stop recording' : 'Start voice input'}
               id="chat-mic"
             >

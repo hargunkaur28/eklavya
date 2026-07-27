@@ -4,7 +4,9 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
+import NarrationPrompt from './NarrationPrompt.jsx';
 import { WrittenInput, isWrittenAnswered } from './WrittenQuestion.jsx';
+import { primeAudio } from '../utils/audioPriming.js';
 // Track 4.1: canonical subject/grade lists now come from the single source.
 import { SUBJECTS as SUBJECTLIST, GRADES as GRADELIST, hasSubSubjects, subSubjectsFor } from '../data/taxonomy.js';
 import { getSubSubjectName } from '../utils/subjectTranslations.js';
@@ -26,7 +28,7 @@ export default function Onboarding() {
 
   const [translatingHindi, setTranslatingHindi] = useState(false);
 
-  const { authFetch } = useAuth();
+  const { authFetch, user } = useAuth();
   const { language } = useLanguage();
   const navigate = useNavigate();
 
@@ -49,6 +51,10 @@ export default function Onboarding() {
     }
   }, [step, language, questions, hindiQuestions, translatingHindi, selectedGrade, selectedSubject, selectedSubSubject, authFetch, includeWritten]);
 
+  // Phase 3: track prompt dismissal locally so we don't flicker the popup after the
+  // PATCH resolves (the user context updates, but only on the next render cycle).
+  const [promptDismissed, setPromptDismissed] = useState(false);
+
   // Split subjects (English/Science/Social Science) require a sub-subject choice.
   const subSubjectOptions = subSubjectsFor(selectedSubject);
   const needsSubSubject = hasSubSubjects(selectedSubject);
@@ -56,6 +62,7 @@ export default function Onboarding() {
 
   // Start Diagnostic Quiz
   const handleStartQuiz = async () => {
+    primeAudio();
     setError('');
     setLoadingQuiz(true);
 
@@ -250,10 +257,18 @@ export default function Onboarding() {
               </div>
             )}
 
+            {/* Phase 3: one-time narration prompt (shown on first quiz encounter) */}
+            {step === 2 && !promptDismissed && !user?.hasSeenNarrationPrompt && (
+              <NarrationPrompt onDone={() => setPromptDismissed(true)} />
+            )}
+
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1.25rem' }}>
               <h3 className="quiz-question-title" style={{ margin: 0 }}>{displayStem}</h3>
               <SpeakerButton
+                key={`speaker-diag-${currentQIndex}`}
                 fetchPayload={{ questionText: displayStem, options: displayOptions, language }}
+                subject={selectedSubject?.name || selectedSubject?.id || ''}
+                autoPlay={!!user?.autoNarrateQuizzes}
                 size={16}
               />
             </div>
@@ -300,7 +315,7 @@ export default function Onboarding() {
                   type="button"
                   className="primary-button"
                   disabled={!currentAnswered || submitting}
-                  onClick={() => setCurrentQIndex(currentQIndex + 1)}
+                  onClick={() => { primeAudio(); setCurrentQIndex(currentQIndex + 1); }}
                 >
                   Next Question
                 </button>
