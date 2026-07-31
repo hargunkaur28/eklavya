@@ -7,8 +7,15 @@ import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash }
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 import { normalizeTopic } from '../utils/weakTopics.js';
-import { subjectScopeLabel, isWrittenHeavy, isKnownSubSubject, hasSubSubjects } from '../config/taxonomy.js';
+import { subjectScopeLabel, isWrittenHeavy, isKnownSubSubject } from '../config/taxonomy.js';
 import { formatQuestionForTTS } from '../utils/ttsNormalize.js';
+import {
+  MIN_QUESTIONS, MAX_QUESTIONS,
+  resolveBlueprint, selectWorkingChapters, planNextRound, generateRound,
+  shouldStop, estimateTotal, chapterAccuracy, coverageOf
+} from '../utils/diagnosticEngine.js';
+import { attachDiagrams } from '../utils/generateDiagram.js';
+import { callGroqChat } from '../utils/groqClient.js';
 
 const router = express.Router();
 
@@ -19,9 +26,20 @@ const router = express.Router();
 const DIAGNOSTIC_WRITTEN_COUNT = 2;
 const DIAGNOSTIC_WRITTEN_THRESHOLD = 60;
 
+// Workstream A: there is deliberately NO handwritten question bank and NO
+// template filler here any more. Those banks were the source of the off-level
+// questions (a Class 10 Maths diagnostic asking "if r = 4, what is the
+// diameter?"), and a wrong-level diagnostic produces a wrong roadmap — which is
+// worse for the student than no roadmap. If generation genuinely fails we return
+// 503 and ask them to retry.
+const GENERATION_UNAVAILABLE =
+  'We could not prepare your diagnostic right now. Your roadmap is built from these questions, so we would rather not guess — please try again in a moment.';
+
 // Translate a MIXED question array (MCQ + written) to Hindi, index-aligned.
 // MCQ uses the option-order-preserving path; written has no options, so it uses
 // the prompt-only Sarvam path (same split as practice.js). Feedback stays English.
+// Workstream D: a diagram's alt text is translated too, so read-aloud describes
+// the figure in Hindi as well.
 async function translateDiagnosticQuestions(questions) {
   const mcqPayload = [];
   const mcqSlot = questions.map(q => {
@@ -34,99 +52,24 @@ async function translateDiagnosticQuestions(questions) {
   const out = new Array(questions.length);
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
+    let diagramAlt = '';
+    if (q.diagram && q.diagram.alt) {
+      // Workstream G: alt text OPTS OUT of maths masking. It feeds TTS and must be
+      // PRONOUNCEABLE, so "PQ" wants to become पीक्यू rather than being preserved as
+      // Latin letters a Hindi voice will stumble over. Masking is on by default
+      // everywhere else; this is the one place the opposite is correct.
+      const ta = await translateTextWithSarvam(q.diagram.alt, 'hi-IN', 1, { maskMath: false });
+      diagramAlt = (ta && ta.trim()) ? ta : '';
+    }
     if (q.type === 'written') {
       const tp = await translateTextWithSarvam(q.questionText);
-      out[i] = { questionText: (tp && tp.trim()) ? tp : q.questionText, options: [] };
+      out[i] = { questionText: (tp && tp.trim()) ? tp : q.questionText, options: [], diagramAlt };
     } else {
-      out[i] = translatedMcq[mcqSlot[i]] || { questionText: q.questionText, options: q.options };
+      const base = translatedMcq[mcqSlot[i]] || { questionText: q.questionText, options: q.options };
+      out[i] = { ...base, diagramAlt };
     }
   }
   return out;
-}
-
-// Hand-written quiz question banks for exact matches
-const handWrittenQuizzes = {
-  'class 10_science': [
-    { question: 'In a balanced chemical equation, the total number of atoms of each element is equal on both sides because of:', options: ['law of conservation of mass', 'law of reflection', 'law of gravitation', 'law of dominance'], correctIndex: 0, topic: 'Chemical Reactions' },
-    { question: 'A solution turns blue litmus red. The solution is most likely:', options: ['acidic', 'basic', 'neutral', 'saline only'], correctIndex: 0, topic: 'Acids & Bases' },
-    { question: 'The functional unit of the kidney is called:', options: ['neuron', 'nephron', 'alveolus', 'villus'], correctIndex: 1, topic: 'Life Processes' },
-    { question: 'For a metallic conductor at constant temperature, current is directly proportional to:', options: ['resistance', 'voltage', 'length only', 'density'], correctIndex: 1, topic: 'Electricity' },
-    { question: 'The image formed by a plane mirror is always:', options: ['real and inverted', 'virtual and erect', 'real and enlarged', 'virtual and diminished'], correctIndex: 1, topic: 'Light & Optics' },
-    { question: 'In human digestion, bile helps mainly in the digestion of:', options: ['fats', 'proteins', 'starch', 'vitamins'], correctIndex: 0, topic: 'Digestion' }
-  ],
-  'class 11_jee': [
-    { question: 'The dimensional formula of force is:', options: ['MLT^-2', 'ML^2T^-2', 'ML^-1T^-2', 'M^0LT^-1'], correctIndex: 0, topic: 'Units & Dimensions' },
-    { question: 'If acceleration is constant, the graph of velocity versus time is:', options: ['a straight line', 'a circle', 'a parabola always', 'a hyperbola'], correctIndex: 0, topic: 'Kinematics' },
-    { question: 'For a projectile launched on level ground, maximum range occurs at:', options: ['30 degrees', '45 degrees', '60 degrees', '90 degrees'], correctIndex: 1, topic: 'Projectile Motion' },
-    { question: 'The roots of x^2 - 5x + 6 = 0 are:', options: ['1 and 6', '2 and 3', '-2 and -3', '0 and 5'], correctIndex: 1, topic: 'Quadratic Equations' },
-    { question: 'The derivative of x^2 with respect to x is:', options: ['x', '2x', 'x^3', '2'], correctIndex: 1, topic: 'Calculus' },
-    { question: 'Work done by a force is zero when force and displacement are:', options: ['parallel', 'anti-parallel', 'perpendicular', 'equal in magnitude'], correctIndex: 2, topic: 'Work & Energy' }
-  ],
-  'class 12_neet': [
-    { question: 'The powerhouse of the cell is the:', options: ['ribosome', 'mitochondrion', 'Golgi body', 'lysosome'], correctIndex: 1, topic: 'Cell Biology' },
-    { question: 'The primary pigment involved in photosynthesis is:', options: ['chlorophyll a', 'xanthophyll', 'carotene', 'anthocyanin'], correctIndex: 0, topic: 'Photosynthesis' },
-    { question: 'The functional unit of heredity is:', options: ['gene', 'ribosome', 'nucleus', 'chromatid'], correctIndex: 0, topic: 'Genetics' },
-    { question: 'In humans, oxygen is transported mainly by:', options: ['plasma water', 'haemoglobin', 'platelets', 'lymphocytes'], correctIndex: 1, topic: 'Human Physiology' },
-    { question: 'The enzyme that begins starch digestion in the mouth is:', options: ['pepsin', 'trypsin', 'salivary amylase', 'lipase'], correctIndex: 2, topic: 'Enzymes & Digestion' },
-    { question: 'A group of individuals of the same species living in an area is called a:', options: ['community', 'population', 'biome', 'ecosystem'], correctIndex: 1, topic: 'Ecology' }
-  ]
-};
-
-function validateGroqQuizJSON(data) {
-  if (!data || typeof data !== 'object' || !Array.isArray(data.questions)) return false;
-  if (data.questions.length < 5 || data.questions.length > 8) return false;
-  for (const q of data.questions) {
-    if (!q.question || typeof q.question !== 'string') return false;
-    if (!Array.isArray(q.options) || q.options.length !== 4) return false;
-    if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 3) return false;
-  }
-  return true;
-}
-
-async function callGroqForQuiz(grade, subject, subSubject) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === 'gsk_demo_key') {
-    throw new Error('Groq API Key not configured');
-  }
-
-  // Scope the quiz to the chosen sub-subject (or all areas for Fusion/Combined).
-  const scope = subjectScopeLabel(subject, subSubject);
-  const prompt = `Generate a diagnostic quiz for Grade: "${grade}" and Subject: "${scope}".
-Return ONLY a valid JSON object matching this exact shape:
-{
-  "questions": [
-    {
-      "question": "Clear multiple choice question text",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "topic": "Short topic name"
-    }
-  ]
-}
-Provide exactly 6 multiple choice questions covering foundational concepts for ${grade} ${scope}. Every question must be about ${scope} — do NOT drift to other areas of ${subject}.
-CRITICAL ACCURACY RULE: Double check all math and facts. correctIndex MUST be the exact 0-based integer index (0, 1, 2, or 3) of the option containing the mathematically and scientifically true correct answer. No markdown formatting, raw JSON only.`;
-
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Groq API responded with status ${response.status}`);
-  }
-
-  const jsonResponse = await response.json();
-  const content = jsonResponse.choices?.[0]?.message?.content;
-  return JSON.parse(content);
 }
 
 // 1 Batched Groq call for 1-sentence explanations across all questions
@@ -152,26 +95,14 @@ Return ONLY a valid JSON object matching this shape:
 No extra text, raw JSON only.`;
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        response_format: { type: 'json_object' }
-      })
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
-      if (Array.isArray(parsed.explanations) && parsed.explanations.length === questions.length) {
-        return parsed.explanations;
-      }
+    // Shared client → 70b → 8b → OpenAI + rate-limit circuit breaker.
+    const raw = await callGroqChat(
+      [{ role: 'user', content: prompt }],
+      { jsonMode: true, temperature: 0.3 }
+    );
+    const parsed = JSON.parse(raw || '{}');
+    if (Array.isArray(parsed.explanations) && parsed.explanations.length === questions.length) {
+      return parsed.explanations;
     }
   } catch (err) {
     console.warn('Batched explanations Groq call failed:', err.message);
@@ -180,7 +111,162 @@ No extra text, raw JSON only.`;
   return questions.map(q => `The correct answer is "${q.options[q.correctIndex]}".`);
 }
 
-// POST /api/diagnostic/generate
+// ── Adaptive session helpers (A3) ───────────────────────────────────────────
+
+// What the client is allowed to see. correctIndex is NEVER included.
+function toClientQuestion(q) {
+  const base = {
+    question: q.questionText,
+    questionText: q.questionText,
+    topic: q.topic,
+    chapterId: q.chapterId || '',
+    difficulty: q.difficulty || ''
+  };
+  if (q.diagram && q.diagram.svg) {
+    base.diagram = { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' };
+  }
+  return q.type === 'written'
+    ? { ...base, type: 'written', writtenStyle: q.writtenStyle }
+    : { ...base, type: 'mcq', options: q.options };
+}
+
+function progressOf(session) {
+  return {
+    asked: session.questions.length,
+    answered: session.gradedCount,
+    round: session.roundNumber,
+    minQuestions: MIN_QUESTIONS,
+    maxQuestions: MAX_QUESTIONS,
+    coverage: coverageOf(session.blueprintChapters, session.chapterStats || {}),
+    estimatedTotal: estimateTotal({
+      chapters: session.blueprintChapters,
+      stats: session.chapterStats || {},
+      asked: session.questions.length,
+      askedMcq: session.questions.filter(q => q.type !== 'written').length,
+      mcqMin: session.mcqMin,
+      mcqMax: session.mcqMax,
+      pendingWritten: session.includeWritten && !session.writtenServed ? DIAGNOSTIC_WRITTEN_COUNT : 0
+    })
+  };
+}
+
+// ── Round pre-generation ────────────────────────────────────────────────────
+//
+// Generating a round takes several seconds, and it used to happen entirely
+// between the student's last answer and the next question — dead time in the very
+// first thing they ever do on the platform. So while they answer the round on
+// screen, we speculatively generate questions for the chapters that will open next.
+//
+// The next round's exact composition depends on answers we do not have yet, but
+// its UNTOUCHED chapters do not: an untouched chapter always starts at 'medium',
+// and untouched chapters open in deterministic blueprint order. Only *how many*
+// open is uncertain. So we warm the next few untouched chapters, and the submit
+// path consumes whatever matches and generates only the remainder.
+const PREFETCH_TTL_MS = 15 * 60 * 1000;
+const PREFETCH_MAX_SESSIONS = 500;
+const PREFETCH_CHAPTERS = 2;
+const roundPrefetch = new Map(); // sessionId -> { at, promise }
+
+function sweepPrefetch() {
+  const cutoff = Date.now() - PREFETCH_TTL_MS;
+  for (const [k, v] of roundPrefetch) if (v.at < cutoff) roundPrefetch.delete(k);
+  // Hard cap as a backstop against unbounded growth (Map preserves insertion order).
+  while (roundPrefetch.size > PREFETCH_MAX_SESSIONS) {
+    roundPrefetch.delete(roundPrefetch.keys().next().value);
+  }
+}
+
+function schedulePrefetch(session) {
+  try {
+    sweepPrefetch();
+    const key = String(session._id);
+    roundPrefetch.delete(key);
+
+    const stats = session.chapterStats || {};
+    // Chapters that are neither already probed nor part of the round now on screen.
+    const onScreen = new Set(session.questions.slice(session.gradedCount).map(q => q.chapterId));
+    const untouched = session.blueprintChapters
+      .filter(c => !stats[c.id]?.asked && !onScreen.has(c.id))
+      .slice(0, PREFETCH_CHAPTERS);
+    if (!untouched.length) return;
+
+    const specs = untouched.map(chapter => ({ chapter, difficulty: 'medium' }));
+    const promise = generateRound({
+      grade: session.grade,
+      subject: session.subject,
+      subSubject: session.subSubject,
+      blueprint: {
+        chapters: session.blueprintChapters,
+        difficultyAnchor: session.difficultyAnchor,
+        exemplars: session.exemplars
+      },
+      specs,
+      askedStems: session.questions.map(q => q.questionText)
+    })
+      .then(async (questions) => {
+        await attachDiagrams(questions, {
+          grade: session.grade, subject: session.subject,
+          subSubject: session.subSubject, chapters: session.blueprintChapters
+        });
+        return questions;
+      })
+      // A failed prefetch is a non-event: the submit path just generates normally.
+      .catch((err) => { console.warn('Round prefetch failed (harmless):', err.message); return []; });
+
+    roundPrefetch.set(key, { at: Date.now(), promise });
+  } catch (err) {
+    console.warn('Round prefetch could not be scheduled (harmless):', err.message);
+  }
+}
+
+// Consume the warmed questions for a session, if any. Always resolves.
+async function takePrefetched(sessionId) {
+  const entry = roundPrefetch.get(String(sessionId));
+  if (!entry) return [];
+  roundPrefetch.delete(String(sessionId));
+  try {
+    return (await entry.promise) || [];
+  } catch {
+    return [];
+  }
+}
+
+// Fold one graded answer into the per-chapter confidence the algorithm reads.
+// MCQ only: written questions are served AFTER the stop decision, so counting
+// them would retroactively change a decision that has already been made.
+function recordChapterAnswer(session, q, wasCorrect) {
+  if (q.type === 'written' || !q.chapterId) return;
+  const stats = session.chapterStats || {};
+  const s = stats[q.chapterId] || { asked: 0, correct: 0, lastDifficulty: 'medium', lastCorrect: false };
+  s.asked += 1;
+  if (wasCorrect) s.correct += 1;
+  s.lastDifficulty = q.difficulty || 'medium';
+  s.lastCorrect = !!wasCorrect;
+  stats[q.chapterId] = s;
+  session.chapterStats = stats;
+  session.markModified('chapterStats');
+}
+
+// Append a freshly generated round to the session, keeping the Hindi cache
+// index-aligned (empty slots for rounds generated while the student is in English —
+// filled on demand by the session-translate route).
+async function appendRound(session, questions, wantHindi) {
+  const startIndex = session.questions.length;
+  questions.forEach(q => session.questions.push(q));
+  session.roundNumber += 1;
+
+  let translated = [];
+  if (wantHindi) {
+    translated = await translateDiagnosticQuestions(questions);
+  }
+  while (session.translatedHindiQuestions.length < startIndex) {
+    session.translatedHindiQuestions.push({ questionText: '', options: [], diagramAlt: '' });
+  }
+  translated.forEach(t => session.translatedHindiQuestions.push(t));
+  return { startIndex, translated };
+}
+
+// POST /api/diagnostic/generate — starts an adaptive session and returns round 1.
 router.post('/generate', authMiddleware, requireRole('student'), async (req, res) => {
   try {
     const { grade, subject } = req.body;
@@ -197,134 +283,134 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       return res.status(400).json({ error: `"${subSubject}" is not a valid sub-subject of ${subject}.` });
     }
 
-    const key = `${grade.toLowerCase()}_${subject.toLowerCase()}`;
-    let rawQuestions = null;
-
-    // Bypass the legacy static bank whenever a sub-subject is chosen — its key is
-    // subject-level ('class 10_science'), so it would bleed the general-Science bank
-    // into a Physics/Chemistry diagnostic. Sub-subject requests always generate fresh.
-    if (!subSubject && handWrittenQuizzes[key]) {
-      rawQuestions = handWrittenQuizzes[key];
-    } else {
-      let quizData = null;
-      try {
-        quizData = await callGroqForQuiz(grade, subject, subSubject);
-        if (!validateGroqQuizJSON(quizData)) {
-          console.warn('First Groq quiz validation failed, retrying once...');
-          quizData = await callGroqForQuiz(grade, subject, subSubject);
-        }
-      } catch (groqErr) {
-        console.warn('Groq quiz generation failed, using fallback bank:', groqErr.message);
-      }
-
-      if (quizData && validateGroqQuizJSON(quizData)) {
-        rawQuestions = quizData.questions;
-      } else {
-        rawQuestions = [
-          { question: `What is a fundamental concept in ${subject} for ${grade}?`, options: ['Basic Foundation', 'Advanced Theory', 'Hypothetical Model', 'Unrelated Topic'], correctIndex: 0, topic: 'Fundamentals' },
-          { question: `Which method is most effective when studying ${subject}?`, options: ['Consistent Practice', 'Memorization only', 'Skipping exercises', 'Guesswork'], correctIndex: 0, topic: 'Study Methods' },
-          { question: `When solving a complex problem in ${subject}, what is the first step?`, options: ['Identify given parameters', 'Write final answer immediately', 'Skip analysis', 'Guess option'], correctIndex: 0, topic: 'Problem Solving' },
-          { question: `Why is active recall important in ${subject}?`, options: ['Enhances long-term memory retention', 'Wastes time', 'Decreases understanding', 'Makes tests harder'], correctIndex: 0, topic: 'Active Recall' },
-          { question: `What is the role of periodic revision in ${subject}?`, options: ['Consolidates weak topics', 'Causes confusion', 'Is unnecessary', 'Replaces learning'], correctIndex: 0, topic: 'Revision' },
-          { question: `How should quiz results in ${subject} be used?`, options: ['Target weak areas for improvement', 'Ignore feedback', 'Only celebrate correct answers', 'Stop practicing'], correctIndex: 0, topic: 'Self Assessment' }
-        ];
-      }
-    }
-
-    const mcqQuestions = rawQuestions.map(q => ({
-      type: 'mcq',
-      questionText: q.questionText || q.question,
-      options: q.options,
-      correctIndex: q.correctIndex,
-      topic: q.topic || 'General'
-    }));
-
-    // Track 3: opt-in written questions. Pass the MCQ topic labels as the canonical
-    // list so written questions tag FROM those labels (verbatim) — they merge into
-    // the same topic buckets as MCQs in the weak/strong split instead of creating
-    // drift singletons that could over-weight the roadmap from one data point.
     // Written-heavy sub-subjects (English Writing/Fusion) auto-include written
     // questions; everything else only when the student opts in via the toggle.
+    // The MCQ budget is reduced by the written count so the TOTAL question count
+    // is always inside [MIN_QUESTIONS, MAX_QUESTIONS].
     const includeWritten = req.body.includeWritten === true || isWrittenHeavy(subject, subSubject);
-    let writtenQuestions = [];
-    if (includeWritten) {
-      const mcqTopics = [...new Set(mcqQuestions.map(q => q.topic).filter(Boolean))];
-      const written = await generateWritten(
-        grade, subject, subjectScopeLabel(subject, subSubject),
-        DIAGNOSTIC_WRITTEN_COUNT, writtenStyleFor(subject, subSubject), mcqTopics
-      );
-      writtenQuestions = written.map(w => ({
-        type: 'written',
-        questionText: w.questionText,
-        topic: w.topic || 'General',
-        expectedPoints: w.expectedPoints,
-        writtenStyle: w.writtenStyle
-      }));
+    const writtenCount = includeWritten ? DIAGNOSTIC_WRITTEN_COUNT : 0;
+    const mcqMin = MIN_QUESTIONS - writtenCount;
+    const mcqMax = MAX_QUESTIONS - writtenCount;
+
+    let blueprint;
+    try {
+      blueprint = await resolveBlueprint(grade, subject, subSubject);
+    } catch (err) {
+      console.warn('Diagnostic blueprint resolution failed:', err.message);
+      return res.status(503).json({ error: GENERATION_UNAVAILABLE });
     }
 
-    const sessionQuestions = [...mcqQuestions, ...writtenQuestions];
+    const workingChapters = selectWorkingChapters(blueprint.chapters, mcqMax, mcqMin);
+    const specs = planNextRound({ chapters: workingChapters, stats: {}, askedMcq: 0, mcqMax });
 
-    const session = await DiagnosticSession.create({
+    let questions;
+    try {
+      questions = await generateRound({
+        grade, subject, subSubject,
+        blueprint: { ...blueprint, chapters: workingChapters },
+        specs,
+        askedStems: []
+      });
+    } catch (err) {
+      console.warn('Diagnostic round 1 generation failed:', err.message);
+      return res.status(503).json({ error: GENERATION_UNAVAILABLE });
+    }
+
+    // Workstream D: attach a figure to the subset of questions that genuinely need one.
+    await attachDiagrams(questions, { grade, subject, subSubject, chapters: workingChapters });
+
+    const session = new DiagnosticSession({
       userId: req.userId,
       grade,
       subject,
       subSubject,
-      questions: sessionQuestions
+      questions: [],
+      blueprintChapters: workingChapters,
+      difficultyAnchor: blueprint.difficultyAnchor,
+      exemplars: blueprint.exemplars,
+      chapterStats: {},
+      roundNumber: 0,
+      gradedCount: 0,
+      mcqMin,
+      mcqMax,
+      includeWritten
     });
 
-    const clientQuestions = sessionQuestions.map(q => q.type === 'written'
-      ? { type: 'written', question: q.questionText, questionText: q.questionText, writtenStyle: q.writtenStyle, topic: q.topic }
-      : { type: 'mcq', question: q.questionText, questionText: q.questionText, options: q.options, topic: q.topic });
-
-    let translatedHindiQuestions = [];
-    if (isHindiRequested) {
-      translatedHindiQuestions = await translateDiagnosticQuestions(sessionQuestions);
-    }
+    const { translated } = await appendRound(session, questions, isHindiRequested);
+    await session.save();
 
     res.json({
       quizSessionId: session._id,
-      questions: clientQuestions,
-      translatedHindiQuestions
+      questions: session.questions.map(toClientQuestion),
+      translatedHindiQuestions: isHindiRequested ? translated : [],
+      progress: progressOf(session)
     });
+
+    // Warm the next round while the student answers this one. Deliberately after
+    // the response and un-awaited — it must never delay what is on screen.
+    schedulePrefetch(session);
   } catch (error) {
     console.error('Diagnostic generate error:', error);
     res.status(500).json({ error: 'Server error generating diagnostic quiz.' });
   }
 });
 
-// POST /api/diagnostic/submit
+// POST /api/diagnostic/submit — accepts ONE ROUND of answers.
+// Responds either { status:'continue', questions, progress } or
+// { status:'complete', result } (the existing DiagnosticResult shape).
 router.post('/submit', authMiddleware, requireRole('student'), async (req, res) => {
   try {
-    const { quizSessionId, grade, subject, answers } = req.body;
+    const { quizSessionId, answers } = req.body;
+    const isHindiRequested = req.query.lang === 'hi' || req.body.language === 'hi';
+
     if (!quizSessionId) {
       return res.status(400).json({ error: 'quizSessionId is required for submission.' });
     }
-
     if (!Array.isArray(answers)) {
       return res.status(400).json({ error: 'Answers array is required.' });
     }
 
     const session = await DiagnosticSession.findById(quizSessionId);
-    if (!session || session.used || session.userId.toString() !== req.userId) {
+    if (!session || session.used || session.isComplete || session.userId.toString() !== req.userId) {
       return res.status(410).json({ error: 'Quiz session expired or invalid. Please regenerate and retake your diagnostic test.' });
     }
 
-    session.used = true;
-    await session.save();
+    // The round on the student's screen is everything after `gradedCount`. A client
+    // that resends the whole history is tolerated by taking the tail.
+    const pending = session.questions.slice(session.gradedCount);
+    if (!pending.length) {
+      return res.status(409).json({ error: 'This round has already been submitted.' });
+    }
+    const roundAnswers = answers.length > pending.length
+      ? answers.slice(answers.length - pending.length)
+      : answers;
 
-    let finalGrade = grade || session.grade;
-    let finalSubject = subject || session.subject;
-    const finalSubSubject = session.subSubject || ''; // carried from the session (never client-trusted)
+    // Reject a STALE round. Submitting the same round twice (a double-click, a
+    // retried request, a back-button replay) would otherwise grade the round that
+    // is now on screen using the PREVIOUS round's answers — silently wrong, and it
+    // corrupts the weak/strong split the roadmap is built from. `round` is required
+    // rather than optional precisely because an absent field cannot prove freshness;
+    // the per-question stem check below is a second, independent guard.
+    if (!Number.isInteger(req.body.round)) {
+      return res.status(400).json({ error: 'round is required — submit the round number returned with these questions.' });
+    }
+    if (req.body.round !== session.roundNumber) {
+      return res.status(409).json({ error: 'This round has already been submitted. Please continue with the questions on screen.' });
+    }
+    const misaligned = pending.findIndex((q, i) => {
+      const sent = roundAnswers[i]?.questionText;
+      return typeof sent === 'string' && sent.trim() && sent.trim() !== q.questionText.trim();
+    });
+    if (misaligned !== -1) {
+      return res.status(409).json({ error: 'These answers are for an earlier set of questions. Please continue with the questions on screen.' });
+    }
 
-    // Track 3: mixed grading. MCQ = index compare (sync); written = AI-graded
-    // (async), binarised at the 60% diagnostic bar. We AWAIT ALL gradings to
-    // resolve BEFORE computing score, per-topic stats, and the weak/strong split —
-    // because the roadmap is later generated FROM that split, an ungraded written
-    // question leaking into the split would silently corrupt the whole roadmap.
-    // This is the highest-stakes seam in the diagnostic path.
-    const fullQuestions = await Promise.all(session.questions.map(async (sq, idx) => {
-      const ans = answers[idx] || {};
-      const topic = sq.topic || 'General';
+    // Mixed grading. MCQ = index compare (sync); written = AI-graded (async),
+    // binarised at the 60% diagnostic bar. We AWAIT ALL gradings before touching
+    // chapter stats or the stop decision — the roadmap is generated from the
+    // weak/strong split, so an ungraded question leaking through would corrupt it.
+    await Promise.all(pending.map(async (sq, i) => {
+      const ans = roundAnswers[i] || {};
 
       if (sq.type === 'written') {
         const studentAnswer = (ans && typeof ans.writtenAnswer === 'string')
@@ -336,35 +422,201 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
           studentAnswer,
           style: sq.writtenStyle
         });
-        return {
-          type: 'written',
-          questionText: sq.questionText,
-          topic,
-          isCorrect: graded.overall >= DIAGNOSTIC_WRITTEN_THRESHOLD,
-          writtenAnswer: studentAnswer,
-          writtenStyle: sq.writtenStyle,
-          writtenScores: { content: graded.content, grammar: graded.grammar, spelling: graded.spelling },
-          writtenOverall: graded.overall,
-          writtenFeedback: graded.feedback,
-          expectedPoints: sq.expectedPoints || [],
-          explanation: ''
-        };
+        sq.writtenAnswer = studentAnswer;
+        sq.writtenScores = { content: graded.content, grammar: graded.grammar, spelling: graded.spelling };
+        sq.writtenOverall = graded.overall;
+        sq.writtenFeedback = graded.feedback;
+        sq.wasCorrect = graded.overall >= DIAGNOSTIC_WRITTEN_THRESHOLD;
+        return;
       }
 
-      const userSelected = ans.selectedIndex !== undefined ? ans.selectedIndex : 0;
-      return {
-        type: 'mcq',
-        questionText: sq.questionText,
-        options: sq.options,
-        selectedIndex: userSelected,
-        correctIndex: sq.correctIndex,
-        isCorrect: userSelected === sq.correctIndex,
-        topic,
-        explanation: ''
-      };
+      const selected = Number.isInteger(ans.selectedIndex) ? ans.selectedIndex : null;
+      sq.selectedIndex = selected;
+      sq.wasCorrect = selected !== null && selected === sq.correctIndex;
     }));
 
-    // Every grading above is resolved — now it is safe to compute score + split.
+    pending.forEach(sq => recordChapterAnswer(session, sq, sq.wasCorrect));
+    session.gradedCount = session.questions.length;
+
+    const askedMcq = session.questions.filter(q => q.type !== 'written').length;
+    const stop = shouldStop({
+      chapters: session.blueprintChapters,
+      stats: session.chapterStats || {},
+      askedMcq,
+      mcqMin: session.mcqMin,
+      mcqMax: session.mcqMax
+    });
+
+    // ── Still gathering information → serve another MCQ round ───────────────
+    if (!stop) {
+      const specs = planNextRound({
+        chapters: session.blueprintChapters,
+        stats: session.chapterStats || {},
+        askedMcq,
+        mcqMax: session.mcqMax
+      });
+
+      if (specs.length) {
+        try {
+          // Consume anything warmed while the student was answering, then generate
+          // only the slots it could not cover.
+          const warm = await takePrefetched(session._id);
+          const used = new Set();
+          const fromWarm = new Map();
+          for (const spec of specs) {
+            const hit = warm.find(q => q.chapterId === spec.chapter.id && !used.has(q));
+            if (hit) { used.add(hit); fromWarm.set(spec.chapter.id, hit); }
+          }
+          const toGenerate = specs.filter(s => !fromWarm.has(s.chapter.id));
+          if (fromWarm.size) {
+            console.log(`Round prefetch hit: ${fromWarm.size}/${specs.length} question(s) already warm.`);
+          }
+
+          let generated = [];
+          if (toGenerate.length) {
+            generated = await generateRound({
+              grade: session.grade,
+              subject: session.subject,
+              subSubject: session.subSubject,
+              blueprint: {
+                chapters: session.blueprintChapters,
+                difficultyAnchor: session.difficultyAnchor,
+                exemplars: session.exemplars
+              },
+              specs: toGenerate,
+              // Include the warmed stems so a generated question cannot duplicate one.
+              askedStems: [...session.questions.map(q => q.questionText), ...fromWarm.values()].map(
+                q => (typeof q === 'string' ? q : q.questionText)
+              )
+            });
+            await attachDiagrams(generated, {
+              grade: session.grade, subject: session.subject,
+              subSubject: session.subSubject, chapters: session.blueprintChapters
+            });
+          }
+
+          // Re-assemble in the planner's chapter order.
+          const byChapter = new Map(generated.map(q => [q.chapterId, q]));
+          const next = specs
+            .map(s => fromWarm.get(s.chapter.id) || byChapter.get(s.chapter.id))
+            .filter(Boolean);
+          if (!next.length) throw new Error('No questions available for the next round.');
+
+          const { startIndex, translated } = await appendRound(session, next, isHindiRequested);
+          await session.save();
+
+          res.json({
+            status: 'continue',
+            questions: session.questions.slice(startIndex).map(toClientQuestion),
+            translatedHindiQuestions: isHindiRequested ? translated : [],
+            progress: progressOf(session)
+          });
+          schedulePrefetch(session);
+          return;
+        } catch (err) {
+          // A mid-quiz generation failure must not discard the student's answers.
+          // Everything asked so far is already graded and stored, and we are past
+          // the minimum, so completing on what we have is honest and useful.
+          console.warn('Diagnostic next-round generation failed:', err.message);
+          if (askedMcq === 0) return res.status(503).json({ error: GENERATION_UNAVAILABLE });
+        }
+      }
+    }
+
+    // ── Stop condition met → serve the opt-in written questions once ────────
+    if (session.includeWritten && !session.writtenServed) {
+      session.writtenServed = true;
+      const mcqTopics = [...new Set(session.questions.filter(q => q.type !== 'written').map(q => q.topic).filter(Boolean))];
+      // Target the chapters we are least confident about — the written question is
+      // the last piece of signal we get, so spend it where it is worth most.
+      const stats = session.chapterStats || {};
+      const weakest = [...session.blueprintChapters]
+        .sort((a, b) => (chapterAccuracy(stats[a.id]) ?? 1) - (chapterAccuracy(stats[b.id]) ?? 1))
+        .slice(0, DIAGNOSTIC_WRITTEN_COUNT);
+
+      const written = await generateWritten(
+        session.grade, session.subject,
+        subjectScopeLabel(session.subject, session.subSubject),
+        DIAGNOSTIC_WRITTEN_COUNT,
+        writtenStyleFor(session.subject, session.subSubject),
+        mcqTopics,
+        {
+          difficultyAnchor: session.difficultyAnchor,
+          exemplars: session.exemplars,
+          chapters: weakest
+        }
+      );
+
+      if (written.length) {
+        const writtenQuestions = written.map((w, i) => ({
+          type: 'written',
+          questionText: w.questionText,
+          topic: w.topic || 'General',
+          expectedPoints: w.expectedPoints,
+          writtenStyle: w.writtenStyle,
+          chapterId: weakest[i % Math.max(1, weakest.length)]?.id || '',
+          difficulty: 'medium'
+        }));
+        const { startIndex, translated } = await appendRound(session, writtenQuestions, isHindiRequested);
+        await session.save();
+
+        return res.json({
+          status: 'continue',
+          questions: session.questions.slice(startIndex).map(toClientQuestion),
+          translatedHindiQuestions: isHindiRequested ? translated : [],
+          progress: progressOf(session)
+        });
+      }
+      // Written generation failed — complete MCQ-only rather than blocking the
+      // student. Their MCQ answers are already graded and stored.
+      console.warn('Diagnostic written-question generation returned nothing; completing MCQ-only.');
+    }
+
+    // ── Complete → build the DiagnosticResult in the existing shape ─────────
+    session.isComplete = true;
+    session.used = true;
+    await session.save();
+
+    const fullQuestions = session.questions.map((sq) => {
+      const q = sq.toObject ? sq.toObject() : sq;
+      const topic = q.topic || 'General';
+      const diagram = (q.diagram && q.diagram.svg)
+        ? { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' }
+        : undefined;
+
+      if (q.type === 'written') {
+        return {
+          type: 'written',
+          questionText: q.questionText,
+          topic,
+          chapterId: q.chapterId || '',
+          difficulty: q.difficulty || '',
+          isCorrect: !!q.wasCorrect,
+          writtenAnswer: q.writtenAnswer || '',
+          writtenStyle: q.writtenStyle,
+          writtenScores: q.writtenScores,
+          writtenOverall: q.writtenOverall,
+          writtenFeedback: q.writtenFeedback,
+          expectedPoints: q.expectedPoints || [],
+          explanation: '',
+          ...(diagram ? { diagram } : {})
+        };
+      }
+      return {
+        type: 'mcq',
+        questionText: q.questionText,
+        options: q.options,
+        selectedIndex: Number.isInteger(q.selectedIndex) ? q.selectedIndex : -1,
+        correctIndex: q.correctIndex,
+        isCorrect: !!q.wasCorrect,
+        topic,
+        chapterId: q.chapterId || '',
+        difficulty: q.difficulty || '',
+        explanation: '',
+        ...(diagram ? { diagram } : {})
+      };
+    });
+
     // Track 4.1: bucket topics by normalizeTopic (the SAME rule the roadmap's
     // weak-topic aggregation uses) so casing/whitespace variants of one topic MERGE
     // instead of splitting into separate weak/strong entries. The first-seen ORIGINAL
@@ -381,8 +633,6 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
     }
 
     // Explanations are MCQ-only (written questions carry AI feedback instead).
-    // Filtering avoids callGroqForExplanations dereferencing options[correctIndex]
-    // on a written question. References are shared, so this mutates fullQuestions.
     const mcqOnly = fullQuestions.filter(q => q.type !== 'written');
     const explanations = await callGroqForExplanations(mcqOnly);
     mcqOnly.forEach((mq, i) => {
@@ -399,30 +649,77 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
       if (accuracy >= 0.75) strongTopics.push(s.label);
     });
 
-    let recommendation = '';
-    if (weakTopics.length > 0) {
-      recommendation = `Focus on ${weakTopics.join(', ')} — you scored lower in these topics and need extra targeted practice.`;
-    } else {
-      recommendation = `Great performance! You have a solid grasp of foundational ${finalSubject} concepts.`;
+    // AMBIGUITY MUST FAIL SAFE TOWARD MORE TEACHING.
+    // A chapter we probed but ran out of budget on sits near 50% — we are NOT
+    // confident the student knows it. Dropping it would silently remove it from the
+    // roadmap on the strength of no conclusion, so every unresolved chapter is added
+    // to weakTopics and earns roadmap days. Untouched chapters are a different case
+    // (no evidence at all, rather than inconclusive evidence) and are reported in
+    // `chapterCoverage` instead of being guessed at.
+    const coverage = coverageOf(session.blueprintChapters, session.chapterStats || {});
+    for (const chapterName of coverage.unresolvedChapters) {
+      if (!weakTopics.some(w => normalizeTopic(w) === normalizeTopic(chapterName))) {
+        weakTopics.push(chapterName);
+      }
     }
+    if (coverage.unresolvedChapters.length) {
+      console.log(`Diagnostic ${session._id}: ${coverage.unresolvedChapters.length} chapter(s) unresolved at stop — treated as weak.`);
+    }
+    console.log(
+      `Diagnostic ${session._id} complete: ${fullQuestions.length} questions, ` +
+      `chapters touched ${coverage.touched}/${coverage.total} (resolved ${coverage.resolved}).`
+    );
+
+    const recommendation = weakTopics.length > 0
+      ? `Focus on ${weakTopics.join(', ')} — you scored lower in these topics and need extra targeted practice.`
+      : `Great performance! You have a solid grasp of foundational ${session.subject} concepts.`;
 
     const diagnosticResult = await DiagnosticResult.create({
       userId: req.userId,
-      grade: finalGrade,
-      subject: finalSubject,
-      subSubject: finalSubSubject,
+      grade: session.grade,
+      subject: session.subject,
+      subSubject: session.subSubject || '',
       questions: fullQuestions,
       weakTopics,
       strongTopics,
       recommendation,
       score,
-      totalQuestions: fullQuestions.length
+      totalQuestions: fullQuestions.length,
+      chapterCoverage: coverage
     });
 
-    res.status(201).json(diagnosticResult);
+    roundPrefetch.delete(String(session._id));   // session is over — drop any warm round
+    res.status(201).json({ status: 'complete', result: diagnosticResult });
   } catch (error) {
     console.error('Diagnostic submit error:', error);
     res.status(500).json({ error: 'Server error saving diagnostic result.' });
+  }
+});
+
+// POST /api/diagnostic/session/:id/translate
+// Mid-quiz language switch. Before the adaptive rewrite the client re-called
+// /generate with lang=hi, which now would abandon the in-flight session and
+// re-roll the whole quiz — so an in-place session translation is unavoidable.
+// Ownership-checked; caches onto the session so a second switch is free.
+router.post('/session/:id/translate', authMiddleware, requireRole('student'), async (req, res) => {
+  try {
+    const session = await DiagnosticSession.findById(req.params.id);
+    if (!session || session.userId.toString() !== req.userId) {
+      return res.status(404).json({ error: 'Diagnostic session not found.' });
+    }
+
+    const cached = session.translatedHindiQuestions || [];
+    const complete = cached.length === session.questions.length
+      && cached.every(t => t && t.questionText);
+    if (!complete) {
+      session.translatedHindiQuestions = await translateDiagnosticQuestions(session.questions);
+      await session.save();
+    }
+
+    res.json({ translatedHindiQuestions: session.translatedHindiQuestions });
+  } catch (error) {
+    console.error('Translate diagnostic session error:', error);
+    res.status(500).json({ error: 'Server error translating diagnostic questions.' });
   }
 });
 
@@ -527,10 +824,12 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
         const tStem = await translateTextWithSarvam(q.questionText);
         if (tStem && tStem.trim()) {
           const tOpts = await Promise.all((q.options || []).map((o) => translateTextWithSarvam(o)));
+          const tAlt = (q.diagram && q.diagram.alt) ? await translateTextWithSarvam(q.diagram.alt, 'hi-IN', 1, { maskMath: false }) : '';   // alt text: pronounceable, see line ~58
           hindiQ = {
             questionText: tStem,
             options: (q.options || []).map((o, i) => (tOpts[i] && tOpts[i].trim()) ? tOpts[i] : o),
-            explanation: ''
+            explanation: '',
+            diagramAlt: (tAlt && tAlt.trim()) ? tAlt : ''
           };
           if (!Array.isArray(result.translatedHindiQuestions)) result.translatedHindiQuestions = [];
           result.translatedHindiQuestions[idx] = hindiQ;
@@ -551,7 +850,14 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
     // Written questions have no options — read only the prompt (guard the .map).
     const options = (effectiveHindi && hindiQ?.options && hindiQ.options.length > 0) ? hindiQ.options : (q.options || []);
 
-    const textToSpeak = formatQuestionForTTS(stem, options, effectiveHindi ? 'hi' : 'en');
+    // Workstream D: a student using narration must hear the figure described, so the
+    // diagram's alt text is prepended to the spoken text.
+    const altText = effectiveHindi
+      ? ((hindiQ?.diagramAlt || q.diagram?.altHindi || q.diagram?.alt) || '')
+      : (q.diagram?.alt || '');
+    const spokenStem = altText ? `${altText}. ${stem}` : stem;
+
+    const textToSpeak = formatQuestionForTTS(spokenStem, options, effectiveHindi ? 'hi' : 'en');
 
     const textHash = generateContentHash(textToSpeak);
     const filename = `diag-${id}-q${idx}-${effectiveHindi ? 'hi' : 'en'}-${textHash}.wav`;
@@ -603,6 +909,8 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
 
     let stem = questionText;
     let optsList = Array.isArray(options) ? options : [];
+    // Workstream D: the client sends the figure's alt text so narration describes it.
+    let altText = typeof req.body.diagramAlt === 'string' ? req.body.diagramAlt.trim() : '';
 
     // Translate-on-demand when the narration language differs from the supplied text.
     if (narrateLang !== displayedLang) {
@@ -615,6 +923,10 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
             const tOpts = await Promise.all(optsList.map((o) => translateTextWithSarvam(o)));
             stem = tStem;
             optsList = optsList.map((o, i) => (tOpts[i] && tOpts[i].trim()) ? tOpts[i] : o);
+            if (altText) {
+              const tAlt = await translateTextWithSarvam(altText);
+              if (tAlt && tAlt.trim()) altText = tAlt;
+            }
           } else {
             console.warn('live-audio: en→hi translation failed — narrated in displayed language (en) instead of requested (hi).');
             narrateLang = displayedLang;
@@ -636,7 +948,7 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
 
     const isHindi = narrateLang === 'hi';
     const targetLang = isHindi ? 'hi-IN' : 'en-IN';
-    const textToSpeak = formatQuestionForTTS(stem, optsList, isHindi ? 'hi' : 'en');
+    const textToSpeak = formatQuestionForTTS(altText ? `${altText}. ${stem}` : stem, optsList, isHindi ? 'hi' : 'en');
 
     const textHash = generateContentHash(textToSpeak);
     const filename = `live-q-${isHindi ? 'hi' : 'en'}-${textHash}.wav`;

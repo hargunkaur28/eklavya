@@ -9,6 +9,7 @@ import NarrationPrompt from './NarrationPrompt.jsx';
 import { primeAudio } from '../utils/audioPriming.js';
 import { getLocalDate } from '../utils/streak.js';
 import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestion.jsx';
+import QuestionDiagram from './QuestionDiagram.jsx';
 
 // Phase 6: practice mode. Generates a FRESH quiz per session (variety, no cache),
 // separate from the roadmap — it never marks days complete and never writes to
@@ -207,6 +208,8 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
                   size={16}
                 />
               </div>
+              {/* Workstream D — data-URI <img>, never inline SVG in the DOM. */}
+              <QuestionDiagram diagram={q.diagram} />
               {q.type === 'written' ? (
                 <WrittenInput
                   value={answers[qi]}
@@ -267,6 +270,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
               </h4>
               <SpeakerButton fetchPayload={{ questionText: q.questionText, options: q.options || [], language }} subject={selected?.subject} size={16} />
             </div>
+            <QuestionDiagram diagram={q.diagram} />
             {q.type === 'written' ? (
               <WrittenReview
                 answer={q.writtenAnswer}

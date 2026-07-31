@@ -17,6 +17,22 @@ const practiceQuestionSchema = new mongoose.Schema({
   translatedHindiOptions: { type: [String], default: [] },
   translatedHindiExplanation: { type: String, default: '' },
   hindiTranslated: { type: Boolean, default: false },
+  // Workstream G: which register this cached Hindi was produced under. Absent on
+  // every pre-existing translation, which is the point — absent reads as stale and
+  // earns one retranslation. Without it the register fix applies to new content only
+  // and looks intermittent to a student who sees friendly Hindi in one place and
+  // formal Hindi in another.
+  hindiRegisterVersion: { type: Number },
+  // Workstream D: optional generated figure, sanitised server-side before storage.
+  // Additive — pre-existing sessions read back with no diagram. Must be a declared
+  // schema path or Mongoose discards the figure silently on save. No
+  // `diagramAttempted` here: practice regenerates from scratch every session, so
+  // there is no cached question for a retry to ever apply to.
+  diagram: {
+    svg: { type: String, default: '' },
+    alt: { type: String, default: '' },
+    altHindi: { type: String, default: '' }
+  },
   ...writtenQuestionFields
 }, { _id: false });
 

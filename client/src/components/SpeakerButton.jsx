@@ -3,7 +3,7 @@ import { Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { resolveNarrationLang } from '../utils/narration.js';
-import { primeAudio, getSharedAudio } from '../utils/audioPriming.js';
+import { playNarration, stopNarration, subscribe as subscribeNarration, getNarrationState } from '../utils/narrationController.js';
 import { formatQuestionForTTS, normalizeTextForTTS } from '../utils/ttsNormalize.js';
 
 export default function SpeakerButton({
@@ -30,99 +30,40 @@ export default function SpeakerButton({
     siteLang: language
   });
 
+  // Workstream F: this component no longer OWNS playback. narrationController does.
+  // It keeps only what is genuinely local — which endpoint to call — and reads its
+  // playing/loading state back from the controller, so a button can never believe it
+  // is playing while a different button actually is.
+  const ownerIdRef = useRef(`spk-${Math.random().toString(36).slice(2)}`);
   const [status, setStatus] = useState('idle'); // 'idle' | 'loading' | 'playing' | 'error'
   const [errorType, setErrorType] = useState(null); // null | 'unavailable' | 'rate_limited'
   const [autoplayBlocked, setAutoplayBlocked] = useState(false); // browser policy blocked auto-play
-  const audioRef = useRef(null);
   const resetTimerRef = useRef(null);
   const handleClickRef = useRef(null); // stable ref for the auto-play effect
   const onEndedRef = useRef(onEnded);
   useEffect(() => { onEndedRef.current = onEnded; });
 
-  // Stop audio on unmount
-  useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (resetTimerRef.current) {
-        clearTimeout(resetTimerRef.current);
-      }
-    };
-  }, []);
-
-  const playWebSpeechFallback = (textToSpeak, speakLang = narrationLang) => {
-    if (!('speechSynthesis' in window) || !textToSpeak) return false;
-
-    try {
-      window.speechSynthesis.cancel();
-      const normalizedText = normalizeTextForTTS(textToSpeak, speakLang);
-
-      // Chunk text into short sentences to avoid Chrome long-text speech timeouts
-      const sentences = normalizedText.length > 250
-        ? normalizedText.split(/(?<=[.?!।\n])\s+/).filter(s => s.trim().length > 0)
-        : [normalizedText];
-
-      let currentIndex = 0;
-
-      const speakNextSentence = () => {
-        if (currentIndex >= sentences.length) {
-          setStatus('idle');
-          audioRef.current = null;
-          if (onEndedRef.current) onEndedRef.current();
-          return;
-        }
-
-        const currentText = sentences[currentIndex];
-        const utterance = new SpeechSynthesisUtterance(currentText);
-        const targetLangPrefix = speakLang === 'hi' ? 'hi' : 'en';
-        utterance.lang = speakLang === 'hi' ? 'hi-IN' : 'en-IN';
-        utterance.rate = 0.95;
-
-        const voices = window.speechSynthesis.getVoices();
-        if (voices && voices.length > 0) {
-          const matchingVoice = voices.find(v => v.lang.toLowerCase().startsWith(targetLangPrefix)) ||
-                                voices.find(v => v.lang.toLowerCase().includes('in')) ||
-                                voices[0];
-          if (matchingVoice) {
-            utterance.voice = matchingVoice;
-          }
-        }
-
-        utterance.onend = () => {
-          currentIndex++;
-          speakNextSentence();
-        };
-
-        utterance.onerror = (e) => {
-          if (e.error === 'interrupted' || e.error === 'canceled') {
-            return;
-          }
-          console.warn('SpeechSynthesis sentence error:', e);
-          setStatus('idle');
-          audioRef.current = null;
-        };
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      audioRef.current = {
-        pause: () => {
-          window.speechSynthesis.cancel();
-          currentIndex = sentences.length;
-        },
-        currentTime: 0
-      };
-
-      setStatus('playing');
-      speakNextSentence();
-      return true;
-    } catch (err) {
-      console.warn('Web Speech API fallback error:', err);
-      return false;
+  // Mirror the controller's state, but only when THIS button owns the playback.
+  useEffect(() => subscribeNarration((st) => {
+    if (st.ownerId !== ownerIdRef.current) {
+      // Another button (or a route change) took over — fall back to idle rather than
+      // leaving a stale "playing" icon on a button that is not producing sound.
+      setStatus((prev) => (prev === 'idle' ? prev : 'idle'));
+      return;
     }
-  };
+    if (st.status === 'blocked') { setAutoplayBlocked(true); setStatus('idle'); return; }
+    setStatus(st.status);
+    if (st.status === 'error') setErrorType('unavailable');
+  }), []);
+
+  // Stop on unmount ONLY if this button is the one speaking. An unconditional stop
+  // here would be worse than the bug: quiz auto-narration unmounts question N's button
+  // as question N+1's mounts, so question N's cleanup would kill the narration that
+  // had just correctly started.
+  useEffect(() => () => {
+    if (getNarrationState().ownerId === ownerIdRef.current) stopNarration();
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+  }, []);
 
   const getFullAudioUrl = (relativeOrFullUrl) => {
     if (!relativeOrFullUrl) return '';
@@ -153,26 +94,11 @@ export default function SpeakerButton({
   const handleClick = async (e) => {
     e.stopPropagation();
 
-    // If currently playing, stop audio
-    if (status === 'playing' && audioRef.current) {
-      if (typeof audioRef.current.pause === 'function') {
-        audioRef.current.pause();
-      }
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-      audioRef.current = null;
-      setStatus('idle');
-      return;
-    }
-
+    // Pressing a playing button stops it. Pressing a different one is handled by
+    // playNarration, which stops the previous narration before starting.
+    if (status === 'playing') { stopNarration(); return; }
     if (status === 'loading') return;
-
-    setStatus('loading');
     setErrorType(null);
-
-    // Prime audio session if manual click
-    primeAudio();
 
     const extractTextForFallback = () => {
       if (fallbackText) return normalizeTextForTTS(fallbackText, narrationLang);
@@ -183,118 +109,57 @@ export default function SpeakerButton({
       return null;
     };
 
-    try {
+    // Which endpoint to call is genuinely this component's business; how the result is
+    // played, aborted and invalidated is not. The signal comes from the controller so
+    // an in-flight request is cancelled the moment the student navigates.
+    const resolve = async (signal) => {
       let res;
       if (ttsText) {
-        // Phase 4: raw-text TTS via /api/chat/tts (Mentor replies, general text).
-        // No quiz-specific formatting — just send the text and narration language.
         res = await authFetch('/chat/tts', {
-          method: 'POST',
-          body: JSON.stringify({ text: ttsText, language: narrationLang })
+          method: 'POST', signal,
+          body: JSON.stringify({ text: ttsText, language: narrationLang, sourceLanguage: language })
         });
       } else if (fetchPayload) {
-        // Live-audio: send the displayed text + its language, and the RESOLVED
-        // narration language — the server translates on demand when they differ.
         res = await authFetch('/diagnostic/live-audio', {
-          method: 'POST',
+          method: 'POST', signal,
           body: JSON.stringify({ ...fetchPayload, narrationLang })
         });
       } else if (audioEndpoint) {
-        // Cached-audio: rewrite the endpoint's ?lang= to the resolved narration lang.
-        res = await authFetch(withNarrationLang(audioEndpoint));
+        res = await authFetch(withNarrationLang(audioEndpoint), { signal });
       } else {
         throw new Error('No audio source specified');
       }
 
       if (!res.ok) {
-        const textToSpeak = extractTextForFallback();
-        if (textToSpeak && playWebSpeechFallback(textToSpeak, language)) {
-          return;
-        }
+        let serverFallback = null;
+        try { serverFallback = await res.json(); } catch (_) { /* no JSON body */ }
+        const fbText = serverFallback?.fallbackText || extractTextForFallback();
+        const fbLang = serverFallback?.fallbackLang || narrationLang;
+        if (fbText) return { speak: { text: fbText, lang: fbLang } };
         throw new Error(`HTTP ${res.status}`);
       }
 
       const data = await res.json();
-
-      // /api/chat/tts returns { success, audio } (base64 WAV) — play directly.
-      if (data.success && data.audio) {
-        const audioSrc = `data:audio/wav;base64,${data.audio}`;
-        const audio = getSharedAudio() || new Audio();
-        audio.src = audioSrc;
-        audioRef.current = audio;
-
-        audio.onended = () => {
-          setStatus('idle');
-          audioRef.current = null;
-          if (onEndedRef.current) onEndedRef.current();
-        };
-        audio.onerror = () => {
-          const textToSpeak = extractTextForFallback();
-          if (textToSpeak && playWebSpeechFallback(textToSpeak, language)) return;
-          setStatus('error'); setErrorType('unavailable'); audioRef.current = null;
-        };
-
-        await audio.play();
-        setStatus('playing');
-        setAutoplayBlocked(false);
-        return;
-      }
-
-      // /diagnostic/live-audio and cached-audio paths return { audioUrl } or { useFallback }.
+      // /api/chat/tts returns base64 WAV; the others return a URL or ask for fallback.
+      if (data.success && data.audio) return { src: `data:audio/wav;base64,${data.audio}` };
       if (data.useFallback || !data.audioUrl) {
-        // Server text (data.fallbackText) is already in the narration language; our
-        // own extracted text is in the displayed language.
         const textToSpeak = data.fallbackText || extractTextForFallback();
         const speakLang = data.fallbackText ? narrationLang : language;
-        if (textToSpeak && playWebSpeechFallback(textToSpeak, speakLang)) {
-          return;
-        }
+        if (textToSpeak) return { speak: { text: textToSpeak, lang: speakLang } };
         throw new Error('No audio URL returned');
       }
+      return { src: getFullAudioUrl(data.audioUrl) };
+    };
 
-      const fullUrl = getFullAudioUrl(data.audioUrl);
-      const audio = getSharedAudio() || new Audio();
-      audio.src = fullUrl;
-      audioRef.current = audio;
-
-      audio.onended = () => {
-        setStatus('idle');
-        audioRef.current = null;
-        if (onEndedRef.current) onEndedRef.current();
-      };
-
-      audio.onerror = () => {
-        const textToSpeak = extractTextForFallback();
-        if (textToSpeak && playWebSpeechFallback(textToSpeak, language)) {
-          return;
-        }
-        setStatus('error');
-        setErrorType('unavailable');
-        audioRef.current = null;
-      };
-
-      console.log('[SpeakerButton] Attempting audio.play() for URL:', fullUrl);
-      await audio.play();
-      console.log('[SpeakerButton] audio.play() succeeded.');
-      setStatus('playing');
-      setAutoplayBlocked(false); // clear any prior blocked state
-    } catch (err) {
-      console.warn('[SpeakerButton audio.play rejection]', err.name, err.message);
-      // Detect browser autoplay-policy block (only relevant for auto-play path)
-      if (err.name === 'NotAllowedError') {
-        console.warn('[SpeakerButton autoPlay] Browser autoplay policy blocked audio.play(). Displaying pulse highlight.');
-        setAutoplayBlocked(true);
-        setStatus('idle');
-        return;
-      }
-      console.warn('SpeakerButton playback error, activating Web Speech fallback:', err.message);
-      const textToSpeak = extractTextForFallback();
-      if (textToSpeak && playWebSpeechFallback(textToSpeak, language)) {
-        return;
-      }
-      setStatus('error');
-      setErrorType('unavailable');
-    }
+    const fb = extractTextForFallback();
+    await playNarration({
+      ownerId: ownerIdRef.current,
+      resolve,
+      fallback: fb ? { text: fb, lang: narrationLang } : null,
+      onEnded: () => { if (onEndedRef.current) onEndedRef.current(); },
+      onError: (kind) => { if (kind !== 'blocked') { setErrorType('unavailable'); } },
+      prime: true
+    });
   };
 
   // Keep handleClickRef current so the auto-play effect calls the latest closure.

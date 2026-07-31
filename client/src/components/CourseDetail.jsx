@@ -26,7 +26,13 @@ export default function CourseDetail({ course, onBack }) {
   return (
     <main>
       <header className="detail-header">
-        <button className="back-button" onClick={onBack}><ChevronLeft size={18} /> {t('courseDetail.backToCourses')}</button>
+        {/* The label is a separate element so the narrow breakpoint can drop it and
+            leave an icon-only button. aria-label carries the full text either way, so
+            hiding it visually never removes it from the accessibility tree. */}
+        <button className="back-button" onClick={onBack} aria-label={t('courseDetail.backToCourses')}>
+          <ChevronLeft size={18} />
+          <span className="back-label">{t('courseDetail.backToCourses')}</span>
+        </button>
         <a className="brand" href="#" onClick={onBack}><EklavyaLogo /></a>
       </header>
       <section className="detail-hero">

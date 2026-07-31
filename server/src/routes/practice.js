@@ -1,10 +1,13 @@
 import express from 'express';
+import { callGroqChat } from '../utils/groqClient.js';
 import { authMiddleware, requireRole } from '../middleware/auth.js';
 import PracticeSession from '../models/PracticeSession.js';
-import { translateQuestionsArray, translateTextWithSarvam } from '../utils/translateAndCache.js';
+import { translateQuestionsArray, translateTextWithSarvam, hindiIsStale, TRANSLATION_REGISTER_VERSION } from '../utils/translateAndCache.js';
 import { recordStudyActivity } from '../utils/recordActivity.js';
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
+import { attachDiagrams, rejectOrphanedFigureQuestions, DIAGRAM_SHARE_PRACTICE } from '../utils/generateDiagram.js';
+import { subjectDiagramEligible } from '../config/taxonomy.js';
 
 const router = express.Router();
 
@@ -40,20 +43,12 @@ Return ONLY valid JSON in exactly this shape:
 
 Exactly ${PRACTICE_QUESTIONS} questions, exactly 4 options each. correctIndex is the 0-based index (0-3) of the correct option. ACCURACY IS CRITICAL: double-check every fact and that correctIndex points to the truly correct option. No markdown, raw JSON only.`;
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.9, // high, for practice variety (module quiz uses 0.4)
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) throw new Error(`Groq API responded with status ${response.status}`);
-  const jsonResponse = await response.json();
-  return JSON.parse(jsonResponse.choices?.[0]?.message?.content || '{}');
+  // Shared client → 70b → 8b → OpenAI + rate-limit circuit breaker.
+  const raw = await callGroqChat(
+    [{ role: 'user', content: prompt }],
+    { jsonMode: true, temperature: 0.9 } // high, for practice variety (module quiz uses 0.4)
+  );
+  return JSON.parse(raw || '{}');
 }
 
 function validatePracticeQuizJSON(data) {
@@ -73,7 +68,9 @@ function validatePracticeQuizJSON(data) {
 // order-stable, so we translate ONLY the prompt (Track 3). Grading feedback stays
 // in English for now (flagged as a follow-on, like the notes-PDF Devanagari case).
 async function ensurePracticeHindi(session) {
-  const pendingAll = session.questions.filter(q => !q.hindiTranslated);
+  // Retranslate anything cached under an OLDER register, not just anything
+  // untranslated — otherwise practice keeps serving the formal register forever.
+  const pendingAll = session.questions.filter((q) => hindiIsStale(q));
   if (pendingAll.length === 0) return false;
 
   let changed = false;
@@ -90,6 +87,7 @@ async function ensurePracticeHindi(session) {
         q.translatedHindiOptions = (tr.options && tr.options.length === q.options.length) ? tr.options : q.options;
         q.translatedHindiExplanation = tr.explanation || q.explanation || '';
         q.hindiTranslated = true;
+        q.hindiRegisterVersion = TRANSLATION_REGISTER_VERSION;
         changed = true;
       }
     });
@@ -100,6 +98,7 @@ async function ensurePracticeHindi(session) {
     if (tp && tp.trim() !== q.questionText.trim()) {
       q.translatedHindiQuestionText = tp;
       q.hindiTranslated = true;
+        q.hindiRegisterVersion = TRANSLATION_REGISTER_VERSION;
       changed = true;
     }
   }
@@ -123,7 +122,9 @@ function serializePracticeQuestion(q, idx, isHindi) {
     type: 'mcq',
     questionText: useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText,
     options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
-    topic: q.topic
+    topic: q.topic,
+    // Workstream D — sanitised server-side, rendered client-side as a data-URI <img>.
+    ...(q.diagram?.svg ? { diagram: { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' } } : {})
   };
 }
 
@@ -171,13 +172,34 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       explanation: q.explanation || ''
     }));
 
+    // ── Workstream D: figures, gated at SUBJECT level ──
+    // Practice takes a free-text topic from the student, so there is nothing reliable
+    // to resolve a chapter from — and guessing one via substring matching is the bug
+    // that already bit the roadmap graft. Grammar and Economics contain no
+    // diagram-eligible chapters, so they gate out here and never pay for a call.
+    // Share is 0.20, below the module quiz's 0.35: practice regenerates every session,
+    // so the cost is paid again on every attempt and is never amortised.
+    let questions = [...mcqQs, ...writtenQs];
+    if (subjectDiagramEligible(subject, subSubject)) {
+      await attachDiagrams(questions, {
+        grade, subject, subSubject,
+        isEligible: () => true,          // subject-level decision, already made above
+        topicLabel: topic,
+        share: DIAGRAM_SHARE_PRACTICE
+      });
+    }
+    // Same guard as the module quiz. A practice session is stored and re-read on
+    // submit and review, so an orphaned figure reference persists here too.
+    const { safe } = rejectOrphanedFigureQuestions(questions);
+    questions = safe;
+
     const session = await PracticeSession.create({
       userId: req.userId,
       grade: grade || '',
       subject,
       subSubject,
       topic,
-      questions: [...mcqQs, ...writtenQs]
+      questions
     });
 
     if (isHindi) {
@@ -254,7 +276,9 @@ router.post('/submit', authMiddleware, requireRole('student'), async (req, res) 
         selectedIndex,
         correctIndex: q.correctIndex,
         isCorrect,
-        explanation: useHi ? (q.translatedHindiExplanation || q.explanation || '') : (q.explanation || '')
+        explanation: useHi ? (q.translatedHindiExplanation || q.explanation || '') : (q.explanation || ''),
+        // Workstream D — same figure in review as during the attempt.
+        ...(q.diagram?.svg ? { diagram: { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' } } : {})
       };
     }));
 

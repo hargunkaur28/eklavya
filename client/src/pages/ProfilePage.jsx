@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import Avatar from '../components/Avatar.jsx';
+import ProfileDetailsSection from '../components/ProfileDetailsSection.jsx';
 
 // Phase 7: student account settings — edit name and/or email. Password changes go
 // through the existing /change-password flow (button below). Email is the login
@@ -222,6 +223,13 @@ export default function ProfilePage() {
             )}
           </button>
         </form>
+
+        {/* Workstream B: a SEPARATE form with its own handler, posting to
+            PATCH /api/auth/profile-details. Deliberately not merged with the
+            identity form above (PATCH /api/auth/profile) — two endpoints sharing
+            one submit handler is how the wrong payload gets sent, and in the
+            worst case ships the Aadhaar field along with an email change. */}
+        <ProfileDetailsSection />
 
         <button type="button" className="profile-change-password-btn" onClick={() => navigate('/change-password')}>
           <KeyRound size={16} /> {t('auth.profileChangePasswordLink')}

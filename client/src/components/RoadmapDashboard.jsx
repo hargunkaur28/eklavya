@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect , useRef} from 'react';
+import { stopNarration } from '../utils/narrationController.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
@@ -15,6 +16,7 @@ import DashboardStatCards from './DashboardStatCards.jsx';
 import ParentAccessCard from './ParentAccessCard.jsx';
 import NotesGenerator from './NotesGenerator.jsx';
 import { WrittenReview } from './WrittenQuestion.jsx';
+import MyNotesPanel from './MyNotesPanel.jsx';
 
 export default function RoadmapDashboard() {
   const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
@@ -28,6 +30,19 @@ export default function RoadmapDashboard() {
   // 'roadmap' | 'practice' | 'progress' | 'review'. Practice/Progress are
   // placeholder panels until Phases 6/4 fill them in.
   const [activeSection, setActiveSection] = useState('roadmap');
+
+  // Workstream F: the sidebar swaps activeSection WITHOUT changing the route, so the
+  // pathname-based stopper in App.jsx never fires for a dashboard section change —
+  // moving from a narrating quiz to My Notes would otherwise keep talking. This is the
+  // in-app half of the same rule.
+  // Same first-run guard as NarrationStopper, for the same reason: this fires on
+  // mount too, and on mount the dashboard's own auto-narration has already been
+  // scheduled by a child effect. Only a section TRANSITION should stop anything.
+  const firstSection = useRef(true);
+  useEffect(() => {
+    if (firstSection.current) { firstSection.current = false; return; }
+    stopNarration();
+  }, [activeSection]);
   const [gateNotice, setGateNotice] = useState('');
   const [localDays, setLocalDays] = useState(activeRoadmap?.days || []);
   const [translating, setTranslating] = useState(false);
@@ -352,6 +367,8 @@ export default function RoadmapDashboard() {
 
         {/* NOTES — Track 2: PDF notes generator */}
         {activeSection === 'notes' && <NotesGenerator />}
+        {/* Workstream C: the student's own pages. Feature 18's line above is unchanged. */}
+        {activeSection === 'my-notes' && <MyNotesPanel />}
 
         {/* PRACTICE MODE — Phase 6 */}
         {activeSection === 'practice' && (

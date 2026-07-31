@@ -8,6 +8,7 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { assertAadhaarKeyOrExit } from './utils/aadhaarCrypto.js';
 import authRoutes from './routes/auth.js';
 import diagnosticRoutes from './routes/diagnostic.js';
 import roadmapRoutes from './routes/roadmap.js';
@@ -17,6 +18,7 @@ import chatRoutes from './routes/chat.js';
 import adminRoutes from './routes/admin.js';
 import mentorRoutes from './routes/mentor.js';
 import notesRoutes from './routes/notes.js';
+import myNotesRoutes from './routes/myNotes.js';
 import { parentPasswordChangeGate } from './middleware/auth.js';
 import { startTempAudioCleanup, stopTempAudioCleanup } from './utils/textToSpeech.js';
 
@@ -36,6 +38,11 @@ if (process.env.ADMIN_EMAIL) {
     process.exit(1);
   }
 }
+
+// Workstream B: if Aadhaar collection is enabled, a valid AES-256-GCM key MUST be
+// present — otherwise the server would start up willing to accept Aadhaar numbers
+// it has no way to protect. Same fail-fast shape as the admin guard above.
+assertAadhaarKeyOrExit();
 
 // Narration feature: OpenAI is the HINDI TTS fallback when Sarvam is down/out of
 // quota (Groq TTS can't do Hindi). NOT required to boot — but warn loudly, since
@@ -94,8 +101,14 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// Serve uploads directory statically for audio files
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Serve uploads directory statically for audio files.
+// Helmet sets Cross-Origin-Resource-Policy: same-origin by default, which blocks
+// cross-origin audio playback (the browser rejects 206 Partial Content responses).
+// Override it to 'cross-origin' so the frontend on a different port can load audio.
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, '../uploads')));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -112,6 +125,9 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/mentor', mentorRoutes);
 // Track 2: PDF Notes generator (student-only; ephemeral — no persistence).
 app.use('/api/notes', notesRoutes);
+// Workstream C: My Notes — student-authored pages. A SEPARATE router from
+// /api/notes (Feature 18's AI generator + PDF), which stays untouched.
+app.use('/api/my-notes', parentPasswordChangeGate, myNotesRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

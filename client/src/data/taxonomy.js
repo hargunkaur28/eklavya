@@ -54,3 +54,24 @@ export function isFusionSubSubject(subject, ss) {
   const f = fusionSubSubjectFor(subject);
   return !!f && normalizeSubSubject(ss) === normalizeSubSubject(f);
 }
+
+// ── Diagram eligibility at the SUBJECT level (mirror of the server) ─────────
+// Practice mode gates figures on the SUBJECT, not on a fuzzy match of the freeform
+// topic — see the server file for why. MUST stay identical to
+// server/src/config/taxonomy.js.
+export const DIAGRAM_ELIGIBLE_SUBJECTS = {
+  Science: true,
+  Physics: true,
+  Chemistry: true,
+  Biology: true,
+  Maths: true,
+  JEE: true,
+  NEET: true,
+  English: false,
+  Hindi: false,
+  'Social Science': false
+};
+
+export function subjectDiagramEligible(subject) {
+  return DIAGRAM_ELIGIBLE_SUBJECTS[canonicalSubject(subject)] === true;
+}

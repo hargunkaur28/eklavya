@@ -7,6 +7,7 @@ import { formatGradeSubject } from '../utils/subjectTranslations.js';
 import { getTranslatedTopic } from '../utils/topicTranslations.js';
 import { CheckCircle2, XCircle, Trophy, Sparkles, ArrowRight, Loader2 } from 'lucide-react';
 import SpeakerButton from '../components/SpeakerButton.jsx';
+import QuestionDiagram from '../components/QuestionDiagram.jsx';
 import { WrittenReview } from '../components/WrittenQuestion.jsx';
 
 export default function DiagnosticReview() {
@@ -235,6 +236,13 @@ export default function DiagnosticReview() {
                     </span>
                   )}
                 </div>
+
+                {/* Workstream D: the figure the question was asked with. */}
+                {q.diagram?.svg && (
+                  <QuestionDiagram
+                    diagram={{ ...q.diagram, altHindi: hindiQ?.diagramAlt || q.diagram.altHindi || '' }}
+                  />
+                )}
 
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '1rem' }}>
                   <h4 style={{ margin: 0 }}>

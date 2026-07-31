@@ -6,7 +6,29 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch-path=./src src/server.js",
+    "test:invariants": "node ci-invariants.mjs",
+    "test:diagnostic": "node regress-wsA.mjs",
+    "test:coverage": "node test-coverage-handoff.mjs",
+    "test:filler": "node test-filler-audit.mjs",
+    "test:graft": "node test-graft-budget.mjs",
+    "test:notes": "node test-mynotes.mjs",
+    "test:reorder": "node test-reorder.mjs",
+    "test:privacy": "node test-aadhaar-privacy.mjs",
+    "diag:cloudinary": "node test-cloudinary-keys.mjs",
+    "test:server": "npm run test:invariants && npm run test:diagnostic && npm run test:coverage && npm run test:graft && npm run test:notes && npm run test:reorder && node test-lowergrade-figures.mjs && node test-auth-payload-shape.mjs && node test-aadhaar-key-absence.mjs",
+    "test:diagrams": "node test-diagram-wiring.mjs",
+    "test:lowergrade": "node test-lowergrade-figures.mjs",
+    "test:hindi": "node test-hindi-register.mjs",
+    "test:glossary": "node test-hindi-glossary.mjs",
+    "test:register": "node test-register-migration.mjs",
+    "serve:test": "node src/server.js",
+    "test:authshape": "node test-auth-payload-shape.mjs",
+    "test:aadhaar-absence": "node test-aadhaar-key-absence.mjs",
+    "test:nucleus": "node test-nucleus-figure.mjs",
+    "test:svgsize": "node test-diagram-size-baseline.mjs",
+    "clear:diagrams": "node src/scripts/clear-diagram-cache.js",
+    "test:subject": "node test-subject-competency.mjs"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
@@ -22,6 +44,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.12.0",
     "multer": "^2.2.0",
-    "react": "^19.2.8"
+    "react": "^19.2.8",
+    "sanitize-html": "^2.17.6"
   }
 }

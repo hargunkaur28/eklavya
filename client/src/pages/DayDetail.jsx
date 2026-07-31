@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
-import { ArrowLeft, CheckSquare, Square, Clock, Youtube, FileText, ExternalLink, Loader2, CheckCircle2, Play } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Square, Clock, Youtube, FileText, ExternalLink, Loader2, CheckCircle2, Play, AlertCircle, RefreshCw } from 'lucide-react';
 import SpeakerButton from '../components/SpeakerButton.jsx';
 import YouTubePlayer from '../components/YouTubePlayer.jsx';
 import ModuleQuiz from '../components/ModuleQuiz.jsx';
@@ -226,23 +226,37 @@ export default function DayDetail() {
           </div>
         </header>
 
-        {/* Prose Content Body */}
+        {/* Prose Content Body. `contentAvailable === false` means generation was
+            unavailable — the server caches nothing in that case, so a reload
+            genuinely retries. Videos and the quiz below still work. */}
         <article className="day-content-card">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
             <h3 style={{ margin: 0 }}>{t.overviewKeyConcepts}</h3>
-            <SpeakerButton
-              audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/audio?lang=${language}`}
-              subject={roadmapSubject}
-              autoPlay={autoPlayIndex === 1}
-              onEnded={() => setAutoPlayIndex(-1)}
-              size={18}
-            />
+            {dayData.contentAvailable !== false && (
+              <SpeakerButton
+                audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/audio?lang=${language}`}
+                subject={roadmapSubject}
+                autoPlay={autoPlayIndex === 1}
+                onEnded={() => setAutoPlayIndex(-1)}
+                size={18}
+              />
+            )}
           </div>
-          <div className="prose-body">
-            {dayData.content.split('\n\n').map((paragraph, pIdx) => (
-              <p key={pIdx}>{paragraph}</p>
-            ))}
-          </div>
+          {dayData.contentAvailable === false ? (
+            <div className="lesson-unavailable">
+              <AlertCircle size={22} />
+              <p>{t.lessonUnavailable}</p>
+              <button type="button" className="ghost-button" onClick={() => window.location.reload()}>
+                <RefreshCw size={15} /> {t.lessonRetry}
+              </button>
+            </div>
+          ) : (
+            <div className="prose-body">
+              {(dayData.content || '').split('\n\n').map((paragraph, pIdx) => (
+                <p key={pIdx}>{paragraph}</p>
+              ))}
+            </div>
+          )}
         </article>
 
         {/* Curated Resources Section */}

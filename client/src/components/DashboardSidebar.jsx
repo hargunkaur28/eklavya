@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { gsap } from 'gsap';
-import { BookOpen, Dumbbell, TrendingUp, Trophy, Settings, FileText } from 'lucide-react';
+import { BookOpen, Dumbbell, TrendingUp, Trophy, Settings, FileText, NotebookPen } from 'lucide-react';
 
 // Dashboard navigation rail with a PillNav-style hover effect (adapted from
 // React Bits' PillNav to our section-switching + our cream/green palette).
@@ -15,6 +15,10 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
     { key: 'review', label: t.diagnosticReview, Icon: Trophy },
     // Track 2: PDF Notes generator (inline dashboard section).
     { key: 'notes', label: t.notesNav, Icon: FileText },
+    // Workstream C: My Notes — the student's OWN pages. A separate section from
+    // 'notes' above (Feature 18's AI generator), which keeps its key, route and
+    // endpoints; only its LABEL changed to 'AI Notes'.
+    { key: 'my-notes', label: t.myNotesNav, Icon: NotebookPen },
     // Track 1: Mentor uses the ChatWidget avatar; selecting it routes to /mentor.
     { key: 'mentor', label: t.mentor, img: '/chatbot-avatar.png' },
     { key: 'settings', label: t.settings, Icon: Settings }

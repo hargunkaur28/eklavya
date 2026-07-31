@@ -32,8 +32,37 @@ const moduleQuizQuestionSchema = new mongoose.Schema({
   translatedHindiOptions: { type: [String], default: [] },
   translatedHindiExplanation: { type: String, default: '' },
   hindiTranslated: { type: Boolean, default: false },
+  // Workstream G: which register the cached Hindi was produced under. Additive, and
+  // ABSENT on every pre-existing translation — which is the point: absent reads as
+  // "older than version 2" and triggers one retranslation. Without this the register
+  // fix silently applies to new content only, and looks like an intermittent bug
+  // rather than a stale cache.
+  hindiRegisterVersion: { type: Number },
   audioQuestionEn: { type: String, default: '' },
   audioQuestionHi: { type: String, default: '' },
+
+  // ── Workstream D: figures on a cached module quiz ──
+  // All three are additive; every pre-existing cached quiz reads back with
+  // chapterId '', no diagram, and diagramAttempted undefined.
+  //
+  // `chapterId` records which blueprint chapter the DAY resolved to, so the retry
+  // path on day fetch can re-check eligibility without re-resolving (and without
+  // topic matching) months later.
+  chapterId: { type: String, default: '' },
+  // `diagram` must exist as a schema path or Mongoose silently DISCARDS it on save —
+  // the figure would generate, cost a call, appear to attach, and never persist.
+  diagram: {
+    svg: { type: String, default: '' },
+    alt: { type: String, default: '' },
+    altHindi: { type: String, default: '' }
+  },
+  // Deliberately NO `default: false`, unlike the diagnostic models. The three states
+  // this field encodes are "has one", "decided against one" and "never tried", and
+  // only an absent value can mean the third for a quiz cached before this field
+  // existed. A default would be indistinguishable from a real recorded false — here
+  // both happen to read as retry-eligible, but the distinction is the point of the
+  // field and writing a default in would erase it.
+  diagramAttempted: { type: Boolean },
   ...writtenQuestionFields
 }, { _id: false });
 
@@ -46,6 +75,13 @@ const quizAttemptQuestionSchema = new mongoose.Schema({
   correctIndex: { type: Number }, // MCQ-only; enforced at the submit layer
   isCorrect: { type: Boolean, default: false },
   topic: { type: String, default: 'General' },
+  // Workstream D: the figure the student actually saw, kept with the attempt so the
+  // review renders the same question they answered. Additive.
+  diagram: {
+    svg: { type: String, default: '' },
+    alt: { type: String, default: '' },
+    altHindi: { type: String, default: '' }
+  },
   ...writtenAttemptFields
 }, { _id: false });
 
@@ -71,6 +107,10 @@ const daySchema = new mongoose.Schema({
   hindiFocusTranslated: { type: Boolean, default: false },
   translatedHindiContent: { type: String, default: '' },
   hindiContentTranslated: { type: Boolean, default: false },
+  // Day-level Hindi (topic, focus, lesson prose) carries its own register version —
+  // it is translated on a different path from the quiz questions and must not be
+  // gated by theirs.
+  hindiDayRegisterVersion: { type: Number },
   audioContentEn: { type: String, default: '' },
   audioContentHi: { type: String, default: '' },
   // ── Phase 2: per-video watch tracking ──

@@ -402,13 +402,19 @@ router.post('/message', optionalAuthMiddleware, async (req, res) => {
 // Phase 4: upgraded to the full synthesizeSpeech pipeline (Sarvam → OpenAI Hindi
 // fallback) instead of calling sarvamTextToSpeech directly. Both ChatWidget and
 // Mentor replies benefit — Hindi TTS now has the OpenAI fallback when Sarvam fails.
+//
+// Translate-on-demand: when the caller sends `sourceLanguage` (the language the
+// text is currently in) and it differs from `language` (the desired narration
+// language), we translate via Sarvam before speaking. This lets the DayDetail
+// title speaker pass English text with {language:'hi', sourceLanguage:'en'} and
+// get proper Hindi narration instead of English words on a Hindi voice.
 router.post('/tts', optionalAuthMiddleware, async (req, res) => {
   try {
     if (!checkChatRateLimit(req.ip)) {
       return res.status(429).json({ success: false, error: 'Rate limit exceeded.' });
     }
 
-    const { text, language = 'en' } = req.body;
+    const { text, language = 'en', sourceLanguage } = req.body;
 
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ success: false, error: 'Text is required.' });
@@ -416,18 +422,47 @@ router.post('/tts', optionalAuthMiddleware, async (req, res) => {
 
     // Cap text length for cost/latency control. Raised from 500 → 2000 for Mentor
     // replies; the chunking inside synthesizeSpeech handles arbitrary lengths.
-    const truncatedText = text.length > 2000 ? text.substring(0, 2000) + '...' : text;
-    const targetLang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    let textToSpeak = text.length > 2000 ? text.substring(0, 2000) + '...' : text;
+
+    // Translate on demand when source language and narration language differ.
+    // Currently only en→hi is supported (Sarvam translate). If translation fails,
+    // degrade gracefully — speak the original text in its source language voice.
+    let effectiveLang = language;
+    const srcLang = sourceLanguage || language;
+    if (srcLang !== language) {
+      if (language === 'hi' && (srcLang === 'en' || srcLang === 'en-IN')) {
+        try {
+          const { translateTextWithSarvam } = await import('../utils/translateAndCache.js');
+          const translated = await translateTextWithSarvam(textToSpeak);
+          if (translated && translated.trim()) {
+            textToSpeak = translated;
+          } else {
+            console.warn('chat/tts: en→hi translation returned empty — narrating in English.');
+            effectiveLang = 'en';
+          }
+        } catch (err) {
+          console.warn('chat/tts: en→hi translation failed — narrating in English.', err.message);
+          effectiveLang = 'en';
+        }
+      } else {
+        // Unsupported translation direction — speak in the source language.
+        console.warn(`chat/tts: ${srcLang}→${language} translation unsupported — narrating in source language.`);
+        effectiveLang = srcLang === 'hi' ? 'hi' : 'en';
+      }
+    }
+
+    const targetLang = effectiveLang === 'hi' ? 'hi-IN' : 'en-IN';
 
     // Full pipeline: Sarvam Bulbul → OpenAI Hindi fallback → null (client Web Speech).
-    const audioBuffer = await synthesizeSpeech(truncatedText, targetLang);
+    const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang);
 
     if (audioBuffer) {
       const audioBase64 = audioBuffer.toString('base64');
       res.json({ success: true, audio: audioBase64 });
     } else {
-      // TTS pipeline exhausted — frontend falls back to browser Web Speech
-      res.status(502).json({ success: false });
+      // TTS pipeline exhausted — frontend falls back to browser Web Speech.
+      // Return the (potentially translated) text so the fallback speaks the right language.
+      res.status(502).json({ success: false, fallbackText: textToSpeak, fallbackLang: effectiveLang });
     }
   } catch (error) {
     console.error('Chat TTS error:', error.message);

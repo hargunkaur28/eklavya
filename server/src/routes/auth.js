@@ -13,6 +13,11 @@ import crypto from 'crypto';
 import PasswordResetOtp from '../models/PasswordResetOtp.js';
 import { sendEmail } from '../utils/sendEmail.js';
 import { buildOtpEmail } from '../utils/emailTemplates.js';
+// Workstream B: Aadhaar is encrypted at the request boundary; there is no decrypt.
+import { encryptAadhaar, lastFourOf, aadhaarCollectionEnabled } from '../utils/aadhaarCrypto.js';
+import { validateCompulsory, validatePhone, validateLocation, validateAadhaar, STUDY_MEDIUMS } from '../utils/validateProfile.js';
+import { maskAadhaar } from '../utils/verhoeff.js';
+import { reverseGeocode, validCoords } from '../utils/reverseGeocode.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -44,6 +49,81 @@ function handlePhotoUpload(req, res, next) {
 // while a password-guessing loop is stopped.
 const loginLimiter = createFailureRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
 
+/**
+ * The ONLY shape in which a profile leaves the server — for the student, a parent,
+ * an admin, or `GET /me`. Aadhaar appears as `XXXX XXXX 1234` and nothing else:
+ * there is no branch, no role check, and no query parameter that yields the number,
+ * because the number is not readable at all (no decrypt exists).
+ *
+ * Built by ENUMERATING allowed fields rather than deleting disallowed ones, so a
+ * field added to the schema later is invisible here until it is added on purpose.
+ */
+/**
+ * The ONE user shape returned by /signup, /login and /me.
+ *
+ * These three drifted, and that is precisely how a real bug shipped: the signup payload
+ * omitted `onboardingCompleted` while the other two returned it. The client gate is
+ * `onboardingCompleted === false` — strict on purpose, so a legacy session whose field
+ * is absent is never trapped in a flow it already finished — which makes ABSENCE and
+ * FALSE behave OPPOSITELY. A brand-new student therefore arrived with `undefined`,
+ * `undefined === false` is false, and signup walked straight past the profile flow into
+ * subject selection. Every existing check passed, because they all read /me.
+ *
+ * Keep all three going through here. `test:authshape` fails the build if their key
+ * sets diverge, so a field added to one and not the others cannot ship the same way.
+ */
+function sessionUser(user, sessionRole = 'student') {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email,
+    role: sessionRole,
+    parentLinked: !!user.parentPasswordHash,
+    photoUrl: user.photoUrl || null,
+    narrationLanguagePref: user.narrationLanguagePref || 'hindi',
+    autoNarrateQuizzes: !!user.autoNarrateQuizzes,
+    hasSeenNarrationPrompt: !!user.hasSeenNarrationPrompt,
+    siteLanguage: user.siteLanguage || 'en',
+    onboardingCompleted: !!user.onboardingCompleted,
+    // Aadhaar is MASKED here, as everywhere. No role sees the real number.
+    profile: publicProfile(user, sessionRole)
+  };
+}
+
+function publicProfile(user, sessionRole = 'student') {
+  const p = user?.profile || {};
+
+  // Under Option B a parent shares the student's User document, so every field here
+  // is reachable from a parent session — and admin renders shared chrome too. The
+  // student consented to Aadhaar for VERIFICATION, not for family visibility, so a
+  // parent seeing "XXXX XXXX 0124" is a disclosure they never agreed to. Admin is
+  // specified as parent-linkage status only. The Aadhaar keys are therefore OMITTED
+  // ENTIRELY for non-student sessions rather than blanked — an absent key cannot be
+  // rendered by a client that forgets to check the role.
+  const isStudent = sessionRole === 'student';
+
+  return {
+    age: p.age ?? null,
+    studyMedium: p.studyMedium || '',
+    fatherName: p.fatherName || '',
+    schoolName: p.schoolName || '',
+    schoolCity: p.schoolCity || '',
+    phoneNumber: p.phoneNumber || '',
+    location: {
+      village: p.location?.village || '',
+      city: p.location?.city || '',
+      state: p.location?.state || ''
+    },
+    // Masked only, and STUDENT-ONLY. `aadhaarLast4` is the sole plaintext digit data
+    // stored; even the masked form is withheld from parent and admin sessions.
+    ...(isStudent ? {
+      aadhaarMasked: maskAadhaar(p.aadhaarLast4),
+      aadhaarOnFile: !!p.aadhaarLast4,
+      aadhaarConsentAt: p.aadhaarConsentAt || null
+    } : {})
+  };
+}
+
 // Signup
 router.post('/signup', async (req, res) => {
   try {
@@ -74,7 +154,7 @@ router.post('/signup', async (req, res) => {
     const token = jwt.sign({ userId: user._id, role: user.role }, JWT_SECRET, { expiresIn: tokenDuration });
     res.status(201).json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, photoUrl: user.photoUrl || null }
+      user: sessionUser(user, user.role)
     });
   } catch (error) {
     console.error('Signup error:', error);
@@ -119,14 +199,9 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign({ userId: user._id, role: sessionRole }, JWT_SECRET, { expiresIn: tokenDuration });
     res.json({
       token,
-      user: {
-        id: user._id, name: user.name, email: user.email, role: sessionRole, photoUrl: user.photoUrl || null,
-        // Narration/voice prefs so the client can sync siteLanguage + prefs at login
-        // without a second round-trip (only applied for a student session client-side).
-        narrationLanguagePref: user.narrationLanguagePref || 'hindi',
-        autoNarrateQuizzes: !!user.autoNarrateQuizzes,
-        siteLanguage: user.siteLanguage || 'en'
-      },
+      // Same shape as /signup and /me — the onboarding gate resolves on this response
+      // rather than flashing the dashboard until /me lands.
+      user: sessionUser(user, sessionRole),
       // Parent must set their own password before using the dashboard (enforced with
       // the Phase 4 change-password flow). Only meaningful for a parent session.
       mustChangePassword: sessionRole === 'parent' && !!user.parentMustChangePassword
@@ -145,7 +220,7 @@ router.get('/me', authMiddleware, async (req, res) => {
     if (req.role === 'admin') {
       const adminCreds = await getAdminCreds();
       return res.json({
-        user: { id: null, name: 'Admin', email: adminCreds.email || '', role: 'admin' },
+        user: sessionUser(user, req.role),
         mustChangePassword: false
       });
     }
@@ -164,7 +239,13 @@ router.get('/me', authMiddleware, async (req, res) => {
         narrationLanguagePref: user.narrationLanguagePref || 'hindi',
         autoNarrateQuizzes: !!user.autoNarrateQuizzes,
         hasSeenNarrationPrompt: !!user.hasSeenNarrationPrompt,
-        siteLanguage: user.siteLanguage || 'en'
+        siteLanguage: user.siteLanguage || 'en',
+        // Workstream B: drives the ProtectedRoute onboarding gate. Only meaningful
+        // for a student session — parents/admins are excluded client-side too,
+        // because Option B means they share this document.
+        onboardingCompleted: !!user.onboardingCompleted,
+        // Aadhaar is MASKED here, as everywhere. No role sees the real number.
+        profile: publicProfile(user, req.role)
       },
       // Phase 4: so the client re-derives the forced-change state on refresh, not
       // just from the login response. Only a parent session with the flag set.
@@ -173,6 +254,186 @@ router.get('/me', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Me error:', error);
     res.status(500).json({ error: 'Server error fetching user profile.' });
+  }
+});
+
+// Nominatim's usage policy caps request volume, and this endpoint is the only thing
+// that can reach it, so the limit is enforced per user here rather than globally.
+// Reuses the shared limiter (utils/rateLimiter.js) — 10 lookups / 5 minutes is
+// generous for a one-off onboarding step and cheap for a student who taps twice.
+const geocodeLimiter = createFailureRateLimiter({ windowMs: 5 * 60 * 1000, max: 10 });
+
+// POST /api/auth/reverse-geocode (Workstream B3)
+//
+// Takes coordinates, returns ONLY { village, city, state }. The coordinates are
+// discarded when this handler returns: they are not stored (the schema has no field
+// for them), not echoed back, and not logged on any path. Student-only.
+router.post('/reverse-geocode', authMiddleware, requireRole('student'), async (req, res) => {
+  try {
+    if (geocodeLimiter.isLimited(req.userId)) {
+      return res.status(429).json({ error: 'GEOCODE_RATE_LIMITED' });
+    }
+
+    const lat = Number(req.body?.latitude);
+    const lon = Number(req.body?.longitude);
+    if (!validCoords(lat, lon)) {
+      // Note the absence of the received values in this message.
+      return res.status(400).json({ error: 'GEOCODE_COORDS_INVALID' });
+    }
+    geocodeLimiter.record(req.userId);
+
+    const place = await reverseGeocode(lat, lon);
+    if (!place) {
+      // Permission/lookup failure is not an error state for the student — the UI
+      // falls back to manual entry, so this stays a 200 with a flag.
+      return res.json({ resolved: false });
+    }
+
+    res.json({ resolved: true, location: place });
+  } catch (error) {
+    // Message only, and never req.body — it contains the coordinates.
+    console.error('Reverse geocode error:', error.message);
+    res.status(500).json({ error: 'GEOCODE_FAILED' });
+  }
+});
+
+// GET /api/auth/profile-config — what the onboarding UI needs before rendering.
+// Exists so the client can HIDE the Aadhaar step when the deployment has not
+// enabled collection, rather than showing a field that is guaranteed to fail on
+// submit. Public shape only: never reveals whether a key is configured.
+router.get('/profile-config', authMiddleware, requireRole('student'), (req, res) => {
+  res.json({
+    aadhaarEnabled: aadhaarCollectionEnabled(),
+    studyMediums: STUDY_MEDIUMS
+  });
+});
+
+// PATCH /api/auth/profile-details (Workstream B4) — save the onboarding profile.
+//
+// THE REQUEST BODY IS THE LEAK PATH HERE, not the response. This body carries a
+// plaintext Aadhaar number, which means:
+//   - any request logger that records bodies captures it;
+//   - Express's default error handler (and most custom ones) dump req.body on a 500,
+//     so a validation CRASH would write Aadhaar into the logs;
+//   - an error tracker added later attaches bodies by default.
+// So: the whole handler is wrapped, nothing in it logs req.body or any field of it,
+// validation errors name the rule and never the value, and the plaintext is
+// converted to ciphertext AT THE BOUNDARY — before any Mongoose document exists —
+// so there is no ordering mistake that could persist it.
+router.patch('/profile-details', authMiddleware, requireRole('student'), async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+
+    const compulsory = validateCompulsory(body);
+    const phone = validatePhone(body.phoneNumber);
+    const location = validateLocation(body.location);
+    const aadhaar = validateAadhaar(body.aadhaarNumber, body.aadhaarConsent === true, aadhaarCollectionEnabled());
+
+    const errors = { ...compulsory.errors };
+    if (!phone.ok) errors.phoneNumber = phone.error;
+    if (!aadhaar.ok) errors.aadhaarNumber = aadhaar.error;
+
+    if (Object.keys(errors).length) {
+      // Field names + rules only. No submitted values are echoed back.
+      // CODES, not prose — the client localises them via translations.js.
+      return res.status(400).json({ error: 'PROFILE_VALIDATION_FAILED', fields: errors });
+    }
+
+    // ── The boundary. Encrypt here, then drop the plaintext. ────────────────
+    // Everything below this point deals in ciphertext + last4 only, so no code
+    // path — present or future — can assign the plaintext to a document.
+    let aadhaarEncrypted = null;
+    let aadhaarLast4 = '';
+    let aadhaarConsentAt = null;
+    if (aadhaar.provided) {
+      try {
+        aadhaarEncrypted = encryptAadhaar(aadhaar.digits);
+        aadhaarLast4 = lastFourOf(aadhaar.digits);
+        aadhaarConsentAt = new Date();
+      } catch {
+        // Never include the error's message: an encryption failure could mention
+        // key material. Fixed string only.
+        return res.status(503).json({ error: 'AADHAAR_ENCRYPTION_UNAVAILABLE' });
+      }
+    }
+    // Explicitly release the only remaining handle on the plaintext.
+    aadhaar.digits = '';
+
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    user.profile = user.profile || {};
+    user.profile.age = Number(body.age);
+    user.profile.studyMedium = String(body.studyMedium).trim();
+    user.profile.fatherName = String(body.fatherName).trim();
+    user.profile.schoolName = String(body.schoolName).trim();
+    user.profile.schoolCity = String(body.schoolCity).trim();
+    user.profile.phoneNumber = phone.value;
+    user.profile.location = location.value;
+
+    // Only overwrite Aadhaar when a new number was supplied — an edit that leaves
+    // the field blank must not silently erase a previously stored number.
+    if (aadhaarEncrypted) {
+      user.profile.aadhaarEncrypted = aadhaarEncrypted;
+      user.profile.aadhaarLast4 = aadhaarLast4;
+      user.profile.aadhaarConsentAt = aadhaarConsentAt;
+    }
+
+    if (!user.onboardingCompleted) {
+      user.onboardingCompleted = true;
+      user.onboardingCompletedAt = new Date();
+    }
+
+    await user.save();
+
+    res.json({
+      onboardingCompleted: true,
+      profile: publicProfile(user, 'student')
+    });
+  } catch (error) {
+    // Log the message ONLY. Never the error object (some carry the request), never
+    // req.body, never any field of it.
+    console.error('Profile details save error:', error.message);
+    res.status(500).json({ error: 'PROFILE_SAVE_FAILED' });
+  }
+});
+
+// DELETE /api/auth/profile/aadhaar (Workstream B2) — CONSENT WITHDRAWAL.
+//
+// Required, not optional. Aadhaar was collected against an explicit consent
+// checkbox, and withdrawal of consent is a right under the DPDP Act, 2023 — a
+// deployment that can collect a number but not remove it is the finding that stops
+// a government review.
+//
+// All THREE fields are unset together, deliberately:
+//   • aadhaarEncrypted  — the data itself;
+//   • aadhaarLast4      — a stranded last4 is still identifying;
+//   • aadhaarConsentAt  — a stranded timestamp records consent for data no longer
+//                         held, which is worse than no record at all.
+// `$unset` rather than setting empty strings, so the document returns to exactly the
+// shape of a student who never supplied one.
+router.delete('/profile/aadhaar', authMiddleware, requireRole('student'), async (req, res) => {
+  try {
+    const result = await User.updateOne(
+      { _id: req.userId },
+      {
+        $unset: {
+          'profile.aadhaarEncrypted': '',
+          'profile.aadhaarLast4': '',
+          'profile.aadhaarConsentAt': ''
+        }
+      }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: 'User not found.' });
+
+    // No identifier of the removed data in the log — only that a removal happened.
+    console.log('Aadhaar consent withdrawn and data removed for one student.');
+
+    const user = await User.findById(req.userId);
+    res.json({ removed: true, profile: publicProfile(user, 'student') });
+  } catch (error) {
+    console.error('Aadhaar removal error:', error.message);
+    res.status(500).json({ error: 'PROFILE_SAVE_FAILED' });
   }
 });
 

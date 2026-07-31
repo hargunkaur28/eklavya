@@ -129,3 +129,49 @@ export function subjectScopeLabel(subject, subSubject) {
   }
   return `${canon} — specifically the "${subSubject}" area of ${canon}`;
 }
+
+// ── Diagram eligibility at the SUBJECT level (Workstream D3, practice mode) ──
+//
+// The diagnostic and module quizzes read `diagramEligible` per CHAPTER from the
+// syllabus blueprint. Practice mode cannot: its topic is freeform student input, not
+// a blueprint chapter, so there is no chapter flag to read.
+//
+// The tempting fix is to fuzzy-match the typed topic to the nearest chapter. This
+// codebase already has direct evidence against that: `chapterFor` matched by
+// substring and resolved "Areas Related to Circles" to the shorter chapter "Circles",
+// grafting the wrong one. Practice topics are worse input still — misspellings,
+// Devanagari, off-syllabus topics, "trig" for "Introduction to Trigonometry" — and a
+// matcher's failures are SILENT IN BOTH DIRECTIONS: a Grammar topic that happens to
+// match a Geometry chapter gets figures, and a legitimate Physics topic that matches
+// nothing gets none.
+//
+// So practice gates on the SUBJECT, which is a value the student picked from a fixed
+// list rather than typed. It is robust to every one of those input problems and
+// satisfies D's acceptance criterion directly: Grammar practice gets no figures
+// because Grammar is not eligible, whatever the student typed in the topic box.
+//
+// Accepted cost: a Maths practice quiz on a non-visual topic (Real Numbers) may get
+// one figure attempt that the model correctly declines. That is cheap — MODEL_DECLINED
+// is already a terminal state, so it costs a single call and never repeats.
+export const DIAGRAM_ELIGIBLE_SUBJECTS = {
+  Science: true,          // and every sub-subject: Physics, Chemistry, Biology, Combined
+  Physics: true,
+  Chemistry: true,
+  Biology: true,
+  Maths: true,
+  JEE: true,
+  NEET: true,
+  English: false,         // Writing, Grammar, Reading, Fusion — none are visual
+  Hindi: false,
+  'Social Science': false // Economics, Civics, Geography, History, Combined
+};
+
+/**
+ * Can PRACTICE MODE attach figures for this course identity?
+ * Unknown subjects default to FALSE — a subject nobody has classified should not
+ * start generating figures on the strength of an omission.
+ */
+export function subjectDiagramEligible(subject, subSubject = '') {
+  const canon = canonicalSubject(subject);
+  return DIAGRAM_ELIGIBLE_SUBJECTS[canon] === true;
+}

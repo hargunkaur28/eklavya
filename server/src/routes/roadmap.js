@@ -3,13 +3,19 @@ import { authMiddleware, requireRole } from '../middleware/auth.js';
 import Roadmap from '../models/Roadmap.js';
 import DiagnosticResult from '../models/DiagnosticResult.js';
 import { fetchYoutubeResources } from '../utils/fetchYoutubeResources.js';
-import { translateTextWithSarvam, translateQuestionsArray } from '../utils/translateAndCache.js';
+import { translateTextWithSarvam, translateQuestionsArray, hindiIsStale, TRANSLATION_REGISTER_VERSION } from '../utils/translateAndCache.js';
 import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash, getAudioUrl } from '../utils/textToSpeech.js';
 import { recordStudyActivity } from '../utils/recordActivity.js';
 import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN_QUESTIONS } from '../utils/weakTopics.js';
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
-import { normalizeGrade, normalizeSubject, subjectScopeLabel, isWrittenHeavy } from '../config/taxonomy.js';
+import { normalizeGrade, normalizeSubject, subjectScopeLabel, isWrittenHeavy, subjectDiagramEligible } from '../config/taxonomy.js';
+import { getBlueprint, chapterForTopic } from '../config/syllabusBlueprint.js';
+import {
+  attachDiagrams, rejectOrphanedFigureQuestions, needsDiagramRetry,
+  DIAGRAM_SHARE_MODULE_QUIZ, CACHED_SVG_MAX_BYTES
+} from '../utils/generateDiagram.js';
+import { callGroqChat } from '../utils/groqClient.js';
 import { formatQuestionForTTS, normalizeTextForTTS } from '../utils/ttsNormalize.js';
 
 // Track 3: module quizzes include written questions for English subjects (essay-
@@ -55,6 +61,12 @@ function serializeVideoProgress(day) {
   };
 }
 
+// The documented roadmap length. Grafting (see graftMissingChapters) and the
+// generated plan are both clamped to MAX, because adaptive remediation (Feature 12)
+// inserts further days on top of whatever the base plan is.
+export const ROADMAP_MIN_DAYS = 10;
+export const ROADMAP_MAX_DAYS = 15;
+
 function validateRoadmapJSON(data) {
   if (!data || typeof data !== 'object' || !Array.isArray(data.days)) return false;
   if (data.days.length < 7 || data.days.length > 25) return false;
@@ -65,20 +77,43 @@ function validateRoadmapJSON(data) {
 }
 
 // Call Groq API for Roadmap
-async function callGroqForRoadmap(grade, subject, subSubject, weakTopics, strongTopics) {
+async function callGroqForRoadmap(grade, subject, subSubject, weakTopics, strongTopics, notAssessedTopics = [], syllabusChapters = [], omittedLastAttempt = []) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey || apiKey === 'gsk_demo_key') {
     throw new Error('Groq API Key not configured');
   }
 
   const scope = subjectScopeLabel(subject, subSubject);
+
+  // The adaptive diagnostic (Workstream A) stops as soon as it is confident, so it
+  // routinely finishes without reaching every chapter. A chapter it never asked
+  // about is NOT a chapter the student knows — it is a chapter with no evidence,
+  // and if it is absent from both the weak and strong lists the model has no reason
+  // to include it, so it silently disappears from the study plan. It must appear at
+  // STANDARD pacing: covered once, without the extra days a weak area earns.
+  const notAssessedBlock = notAssessedTopics.length > 0
+    ? `- NOT ASSESSED (the diagnostic stopped before reaching these — there is NO evidence either way): ${notAssessedTopics.join(', ')}
+  These MUST each appear in the roadmap at NORMAL pacing. Do not skip them, and do not give them the extra depth a weak area gets.`
+    : '';
+
+  // The real syllabus for this course, so "breadth" is a concrete list rather than
+  // something the model has to reconstruct from the grade name.
+  const syllabusBlock = syllabusChapters.length > 0
+    ? `\nFULL SYLLABUS for ${grade} ${scope} — the roadmap must span THESE chapters, not only the ones the diagnostic sampled:\n${syllabusChapters.map((c) => `- ${c}`).join('\n')}\n`
+    : '';
+
+  const omissionBlock = omittedLastAttempt.length > 0
+    ? `\nYOUR PREVIOUS ATTEMPT OMITTED these required topics entirely: ${omittedLastAttempt.join(', ')}. Every one of them must appear as a day's topic this time.\n`
+    : '';
+
   const prompt = `Create a COMPLETE study roadmap for a student in Grade: "${grade}", Subject: "${scope}".
 
 This must be a full course covering the CORE SYLLABUS of ${grade} ${scope}, taught in a sensible progression. It is NOT a remedial course on one topic.
-
+${syllabusBlock}${omissionBlock}
 Diagnostic results — use these to WEIGHT emphasis, NOT to limit scope:
 - Weaker areas (give MORE days + deeper practice): ${weakTopics.length > 0 ? weakTopics.join(', ') : 'None identified'}
 - Stronger areas (still cover, but more briefly as revision): ${strongTopics.length > 0 ? strongTopics.join(', ') : 'General foundation'}
+${notAssessedBlock}
 
 CRITICAL SCOPE RULES:
 - The roadmap MUST span the BREADTH of ${grade} ${scope}. Do NOT make most days about the weaker areas.
@@ -101,36 +136,173 @@ Return ONLY a valid JSON object matching this exact shape:
 }
 Generate between 10 and 15 days of structured, actionable daily study goals covering the syllabus breadth. Ensure dayNumber is 1, 2, 3... sequentially. No markdown formatting, raw JSON only.`;
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Groq API responded with status ${response.status}`);
-  }
-
-  const jsonResponse = await response.json();
-  const content = jsonResponse.choices?.[0]?.message?.content;
-  return JSON.parse(content);
+  // Routed through the shared client so the roadmap gets the same 70b → 8b →
+  // OpenAI fallback chain and rate-limit circuit breaker as every other Groq call.
+  // It used to fetch Groq directly, which meant a single 429 dropped the student
+  // straight to the template fallback while every other feature stayed up.
+  const raw = await callGroqChat(
+    [{ role: 'user', content: prompt }],
+    { jsonMode: true, temperature: 0.3 }
+  );
+  return JSON.parse(raw);
 }
 
-// Call Groq to generate prose explainer text for a single day
-async function callGroqForDayContent(grade, subject, topic, focus) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === 'gsk_demo_key') {
-    return `Welcome to Day's module on ${topic}. In this section, you will master ${focus}. Study the foundational concepts carefully and complete the practice exercises to solidify your understanding.`;
+/**
+ * Append days for chapters the generated plan left out, using the blueprint's real
+ * chapter names and concepts.
+ *
+ * Used when a regeneration still omits a required chapter: shipping the incomplete
+ * plan would be the same silent failure with an extra attempt in front of it, but
+ * discarding a good progression wholesale is a worse plan for the student. So the
+ * model's ordering is kept and the gaps are filled from config.
+ * Returns null when there is nothing real to graft from.
+ */
+function graftMissingChapters(roadmapData, missingTopics, grade, subject, subSubject, allRequiredTopics = []) {
+  const blueprint = getBlueprint(grade, subject, subSubject);
+  if (!blueprint || !blueprint.chapters?.length) return null;
+
+  let days = [...(roadmapData.days || [])];
+  // Exact-match-first resolution now lives in the blueprint config and is shared with
+  // the module-quiz figure gate — see chapterForTopic() for why the order matters.
+  const chapterFor = (topic) => chapterForTopic(blueprint, topic, normalizeTopic);
+
+  const resolved = missingTopics.map(chapterFor).filter(Boolean);
+  if (!resolved.length) return null;
+
+  // Respect the day budget. Grafting used to append unconditionally, so a 14-day
+  // plan plus 3 missing chapters shipped as 17 — and adaptive remediation
+  // (Feature 12) then inserts more days on top of that. Whatever will not fit is
+  // merged into a single combined day so every chapter is still named, rather than
+  // being silently dropped again by a truncation.
+  const appended = [];
+  let overflow = [];
+  for (const ch of resolved) {
+    if (days.length + appended.length < ROADMAP_MAX_DAYS) appended.push(ch);
+    else overflow.push(ch);
   }
 
+  for (const ch of appended) {
+    const concepts = (ch.concepts || []).slice(0, 3).join('; ');
+    days.push({
+      dayNumber: days.length + 1,
+      topic: ch.name,
+      focus: concepts ? `Work through ${concepts}.` : `Study the core ideas of ${ch.name}.`,
+      estimatedMinutes: 35
+    });
+  }
+
+  // Spill overflow across SEVERAL catch-up days rather than collapsing everything
+  // into one. A day's module quiz is 10 questions pinned to that day's subtopics,
+  // and Feature 10 only flags a sub-topic weak once it has >= 2 questions. Three
+  // chapters on a day gives roughly three questions each — above the threshold.
+  // Eight would give one apiece, so those chapters could never be flagged weak no
+  // matter how the student answered, and the day would teach nothing meaningful.
+  const CATCHUP_MAX_CHAPTERS = 3;
+  if (overflow.length) {
+    const chunks = [];
+    for (let i = 0; i < overflow.length; i += CATCHUP_MAX_CHAPTERS) {
+      chunks.push(overflow.slice(i, i + CATCHUP_MAX_CHAPTERS));
+    }
+    // Reclaim every slot we need BEFORE pushing anything (truncating inside the
+    // loop would drop the catch-up day the previous iteration just added), and
+    // reclaim only from days that are NOT the sole coverage of a required chapter.
+    // A blind tail-trim deletes whichever late days happened to cover Statistics or
+    // Trigonometry, putting those chapters straight back into the missing list.
+    const keepSlots = ROADMAP_MAX_DAYS - chunks.length;
+    if (days.length > keepSlots) {
+      const covers = (d) => allRequiredTopics.some((t) => {
+        const needle = normalizeTopic(t);
+        return needle && normalizeTopic(`${d.topic || ''} ${d.focus || ''}`).includes(needle);
+      });
+      const droppable = days.filter((d) => !covers(d));
+      const dropCount = Math.min(days.length - keepSlots, droppable.length);
+      const toDrop = new Set(droppable.slice(-dropCount));   // trim from the tail
+      days = days.filter((d) => !toDrop.has(d));
+      if (dropCount < days.length - keepSlots) {
+        console.warn('Roadmap: every remaining day covers a required chapter — plan kept slightly over budget rather than dropping coverage.');
+      }
+    }
+    for (const chunk of chunks) {
+      const names = chunk.map((c) => c.name).join(', ');
+      days.push({
+        dayNumber: days.length + 1,
+        topic: `Catch-up: ${names}`,
+        focus: `Cover the core ideas of ${names} — these were not assessed in your diagnostic, so work through each one's basics.`,
+        estimatedMinutes: 45
+      });
+    }
+    console.warn(`Roadmap day budget reached — spilled ${overflow.length} unassessed chapter(s) across ${chunks.length} catch-up day(s), max ${CATCHUP_MAX_CHAPTERS} per day.`);
+  }
+
+  return { totalDays: days.length, days: days.map((d, i) => ({ ...d, dayNumber: i + 1 })) };
+}
+
+/**
+ * Deterministic roadmap built from the syllabus blueprint, used when generation
+ * is unavailable.
+ *
+ * This replaces a hardcoded twelve-day template ("Foundational Review", "Key
+ * Definitions & Terms", "Advanced Topic Exploration") that named no actual
+ * syllabus content at all — so an outage silently produced a study plan in which
+ * every real chapter was missing, not just the unassessed ones. The blueprint is
+ * config, not filler: these are the real NCERT/CBSE chapter names and the real
+ * concepts an exam tests, in syllabus order. Weak chapters get a second day;
+ * everything else — including chapters the diagnostic never reached — gets one.
+ * Returns null when there is no blueprint for the course, so the caller can fall
+ * back further rather than inventing content.
+ */
+function buildBlueprintRoadmap(grade, subject, subSubject, weakTopics) {
+  const blueprint = getBlueprint(grade, subject, subSubject);
+  if (!blueprint || !blueprint.chapters?.length) return null;
+
+  // Exact match first, for the same reason as chapterFor: a short weak-topic label
+  // must not claim a longer chapter that merely contains it.
+  const isWeak = (name) => {
+    const b = normalizeTopic(name);
+    if (!b) return false;
+    if (weakTopics.some((w) => normalizeTopic(w) === b)) return true;
+    return weakTopics.some((w) => {
+      const a = normalizeTopic(w);
+      return a && (a.includes(b) || b.includes(a));
+    });
+  };
+
+  const days = [];
+  for (const ch of blueprint.chapters) {
+    if (days.length >= 15) break;
+    const concepts = (ch.concepts || []).slice(0, 3).join('; ');
+    days.push({
+      dayNumber: days.length + 1,
+      topic: ch.name,
+      focus: concepts ? `Work through ${concepts}.` : `Study the core ideas of ${ch.name}.`,
+      estimatedMinutes: 35
+    });
+    // A weak chapter earns a second, deeper day — the same weighting the model is
+    // asked for, applied deterministically.
+    if (isWeak(ch.name) && days.length < 15) {
+      const extra = (ch.concepts || []).slice(3).join('; ') || concepts;
+      days.push({
+        dayNumber: days.length + 1,
+        topic: `${ch.name} — extra practice`,
+        focus: extra ? `Targeted practice on ${extra}.` : `Extra practice problems on ${ch.name}.`,
+        estimatedMinutes: 45
+      });
+    }
+  }
+
+  return days.length >= 5 ? { totalDays: days.length, days } : null;
+}
+
+// Call Groq to generate prose explainer text for a single day.
+// Returns null when generation is unavailable — NEVER filler.
+//
+// This used to return "Welcome to Day's module on {topic}. Focus: {focus}" on any
+// failure, and the caller then set `contentGenerated = true` and saved it. So a
+// transient outage permanently cached a non-lesson: the student opened the day,
+// got one sentence that taught nothing, and never got real content again even
+// after Groq recovered. A missing lesson the student can retry is strictly better
+// than a fake one that looks delivered.
+async function callGroqForDayContent(grade, subject, topic, focus) {
   const prompt = `Write a comprehensive, clear, 2-3 paragraph educational explanation for a student in ${grade} studying ${subject}.
 Topic: "${topic}"
 Focus: "${focus}"
@@ -138,28 +310,15 @@ Focus: "${focus}"
 Explain the key theoretical concepts, important rules/formulas, and practical applications in student-friendly tone. Do not use markdown headings. Plain formatted paragraphs only.`;
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.4
-      })
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.choices?.[0]?.message?.content || `Welcome to Day's module on ${topic}. Focus: ${focus}`;
-    }
+    // Shared client → 70b → 8b → OpenAI, plus the rate-limit circuit breaker.
+    const text = await callGroqChat([{ role: 'user', content: prompt }], { temperature: 0.4 });
+    const trimmed = (text || '').trim();
+    // A one-line reply is not a lesson; treat it as a failure rather than cache it.
+    return trimmed.length >= 200 ? trimmed : null;
   } catch (err) {
     console.warn('Groq day content call failed:', err.message);
+    return null;
   }
-
-  return `Welcome to Day's module on ${topic}. Focus: ${focus}`;
 }
 
 // Helper: Match hand-written course YouTube link. Track 4.1: the lowercasing now
@@ -208,7 +367,9 @@ function validateModuleQuizJSON(data) {
 // Groq fallback). Idempotent per question. Returns true if it mutated the day.
 async function ensureQuizHindi(day) {
   const questions = day.moduleQuiz?.questions || [];
-  const pending = questions.filter(q => !q.hindiTranslated);
+  // Workstream G: retranslate anything cached under an older register version, not
+  // just anything untranslated — otherwise existing Hindi serves stale forever.
+  const pending = questions.filter((q) => hindiIsStale(q));
   if (pending.length === 0) return false;
 
   let changed = false;
@@ -229,6 +390,7 @@ async function ensureQuizHindi(day) {
         q.translatedHindiOptions = (tr.options && tr.options.length === q.options.length) ? tr.options : q.options;
         q.translatedHindiExplanation = tr.explanation || q.explanation || '';
         q.hindiTranslated = true;
+        q.hindiRegisterVersion = TRANSLATION_REGISTER_VERSION;
         changed = true;
       }
     });
@@ -241,6 +403,7 @@ async function ensureQuizHindi(day) {
     if (tp && tp.trim() !== q.questionText.trim()) {
       q.translatedHindiQuestionText = tp;
       q.hindiTranslated = true;
+        q.hindiRegisterVersion = TRANSLATION_REGISTER_VERSION;
       changed = true;
     }
   }
@@ -265,14 +428,22 @@ function serializeQuizQuestion(q, idx, isHindi) {
     type: 'mcq',
     questionText: useHi ? (q.translatedHindiQuestionText || q.questionText) : q.questionText,
     options: (useHi && q.translatedHindiOptions?.length === q.options.length) ? q.translatedHindiOptions : q.options,
-    topic: q.topic
+    topic: q.topic,
+    // Workstream D. Sanitised at generation; the client renders it as a data-URI
+    // <img>, which cannot execute script even if sanitisation were bypassed. Omitted
+    // entirely when absent so the payload shape is unchanged for text-only questions.
+    ...(q.diagram?.svg ? { diagram: { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' } } : {})
   };
 }
 
 // Pin each question's freeform `topic` to a canonical per-day sub-topic. Returns
 // { subtopics, questions } where every question.topic is one of subtopics (exact
 // casing). Unmatched question topics are appended so nothing is silently dropped.
-function canonicalizeSubtopics(rawSubtopics, questions) {
+// Exported for CI invariant 8, which feeds a fully-populated question through this
+// function and fails the build if any schema field is dropped. Do not inline the
+// field list into a separate constant for the test to read — the test must observe
+// what this function ACTUALLY returns, or it only checks that two lists agree.
+export function canonicalizeSubtopics(rawSubtopics, questions) {
   const canonicalByNorm = new Map();
   const subtopics = [];
   const addCanonical = (label) => {
@@ -301,7 +472,24 @@ function canonicalizeSubtopics(rawSubtopics, questions) {
       // an MCQ's — which is what lets weakTopics.js + remediation treat it the same.
       type: q.type || 'mcq',
       expectedPoints: q.expectedPoints || [],
-      writtenStyle: q.writtenStyle || 'short'
+      writtenStyle: q.writtenStyle || 'short',
+      // This allow-list is also run by the LAZY MIGRATION path over questions that
+      // are already cached, so anything missing here is silently destroyed on the
+      // next fetch rather than merely absent on a fresh generation. Workstream D's
+      // figures were being wiped that way; the Hindi/audio caches below were too,
+      // which meant a pre-Phase-4 quiz lost its translations and paid to redo them.
+      chapterId: q.chapterId || '',
+      ...(q.diagram?.svg ? { diagram: { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' } } : {}),
+      ...(q.diagramAttempted === true ? { diagramAttempted: true } : {}),
+      translatedHindiQuestionText: q.translatedHindiQuestionText || '',
+      translatedHindiOptions: q.translatedHindiOptions || [],
+      translatedHindiExplanation: q.translatedHindiExplanation || '',
+      hindiTranslated: !!q.hindiTranslated,
+      // Added to the schema in Workstream G; CI invariant 8 caught its absence here
+      // by name, which is precisely the silent loss it exists to prevent.
+      ...(q.hindiRegisterVersion ? { hindiRegisterVersion: q.hindiRegisterVersion } : {}),
+      audioQuestionEn: q.audioQuestionEn || '',
+      audioQuestionHi: q.audioQuestionHi || ''
     };
   });
 
@@ -327,19 +515,12 @@ Return ONLY valid JSON in this shape:
 No markdown, raw JSON only.`;
 
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        response_format: { type: 'json_object' }
-      })
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+    // Shared client → 70b → 8b → OpenAI + rate-limit circuit breaker.
+    const raw = await callGroqChat(
+      [{ role: 'user', content: prompt }],
+      { jsonMode: true, temperature: 0.3 }
+    );
+    const parsed = JSON.parse(raw || '{}');
     if (!parsed.topic || !parsed.focus) return null;
     return {
       topic: String(parsed.topic),
@@ -454,27 +635,12 @@ Return ONLY valid JSON in exactly this shape:
 
 3-5 subtopics. Exactly ${MODULE_QUIZ_MIN_QUESTIONS} questions, exactly 4 options each. Each question's "topic" MUST exactly match one of the "subtopics" strings. correctIndex is the 0-based index (0-3) of the correct option. ACCURACY IS CRITICAL: double-check every fact and that correctIndex points to the truly correct option. No markdown, raw JSON only.`;
 
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.4,
-      response_format: { type: 'json_object' }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Groq API responded with status ${response.status}`);
-  }
-
-  const jsonResponse = await response.json();
-  const content2 = jsonResponse.choices?.[0]?.message?.content;
-  return JSON.parse(content2);
+  // Shared client → 70b → 8b → OpenAI + rate-limit circuit breaker.
+  const raw = await callGroqChat(
+    [{ role: 'user', content: prompt }],
+    { jsonMode: true, temperature: 0.4 }
+  );
+  return JSON.parse(raw || '{}');
 }
 
 // True if the day's video requirement (Phase 2, OR logic) is satisfied.
@@ -507,15 +673,91 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
       : diagnostic.questions?.filter(a => a.isCorrect).map(a => a.topic) || [];
 
     const subSubject = diagnostic.subSubject || '';
+
+    // Workstream A: chapters the adaptive diagnostic never reached. No evidence
+    // either way — they must still be taught, at standard pacing. Without this the
+    // chapter is in neither the weak nor the strong list and quietly vanishes from
+    // the student's plan because the quiz ran out of budget, not because they know it.
+    const notAssessedTopics = Array.isArray(diagnostic.chapterCoverage?.untouchedChapters)
+      ? diagnostic.chapterCoverage.untouchedChapters.filter(Boolean)
+      : [];
+
+    // The real chapter list for this course, so "cover the breadth" is a concrete
+    // instruction rather than something the model reconstructs from the grade name.
+    const blueprint = getBlueprint(diagnostic.grade, diagnostic.subject, subSubject);
+    const syllabusChapters = blueprint ? blueprint.chapters.map((c) => c.name) : [];
+
+    // Did the generated plan actually mention a required topic anywhere?
+    const mentions = (data, topic) => {
+      const needle = normalizeTopic(topic);
+      if (!needle) return true;
+      return (data.days || []).some((d) =>
+        normalizeTopic(`${d.topic || ''} ${d.focus || ''}`).includes(needle)
+      );
+    };
+    const omissionsIn = (data) => notAssessedTopics.filter((t) => !mentions(data, t));
+
     let roadmapData = null;
     try {
-      roadmapData = await callGroqForRoadmap(diagnostic.grade, diagnostic.subject, subSubject, weakTopics, strongTopics);
-      if (!validateRoadmapJSON(roadmapData)) {
-        console.warn('First Groq roadmap validation failed, retrying once...');
-        roadmapData = await callGroqForRoadmap(diagnostic.grade, diagnostic.subject, subSubject, weakTopics, strongTopics);
+      roadmapData = await callGroqForRoadmap(
+        diagnostic.grade, diagnostic.subject, subSubject,
+        weakTopics, strongTopics, notAssessedTopics, syllabusChapters
+      );
+
+      let omitted = validateRoadmapJSON(roadmapData) ? omissionsIn(roadmapData) : [];
+      if (!validateRoadmapJSON(roadmapData) || omitted.length) {
+        console.warn(
+          omitted.length
+            ? `Roadmap omitted unassessed topic(s): ${omitted.join(', ')} — retrying once.`
+            : 'First Groq roadmap validation failed, retrying once...'
+        );
+        const retry = await callGroqForRoadmap(
+          diagnostic.grade, diagnostic.subject, subSubject,
+          weakTopics, strongTopics, notAssessedTopics, syllabusChapters, omitted
+        );
+        // Keep the retry only if it is valid; a valid-but-still-incomplete retry is
+        // still better than an invalid one, so prefer whichever covers more.
+        if (validateRoadmapJSON(retry)) {
+          if (!validateRoadmapJSON(roadmapData) || omissionsIn(retry).length <= omitted.length) {
+            roadmapData = retry;
+          }
+        }
+        // If the retry ALSO omits chapters, do not ship the incomplete plan — that
+        // is the same silent failure with an extra attempt in front of it. Graft the
+        // missing chapters on using real blueprint content, which keeps the model's
+        // (usually better) progression instead of discarding it wholesale.
+        const stillMissing = validateRoadmapJSON(roadmapData) ? omissionsIn(roadmapData) : notAssessedTopics;
+        if (stillMissing.length && validateRoadmapJSON(roadmapData)) {
+          const grafted = graftMissingChapters(roadmapData, stillMissing, diagnostic.grade, diagnostic.subject, subSubject, notAssessedTopics);
+          if (grafted) {
+            console.warn(`Roadmap still omitted ${stillMissing.join(', ')} after retry — appended them from the syllabus blueprint.`);
+            roadmapData = grafted;
+            // Verify the graft actually closed the gap rather than assuming it did.
+            const afterGraft = omissionsIn(roadmapData);
+            if (afterGraft.length) {
+              console.error(`Roadmap STILL omits ${afterGraft.join(', ')} after grafting — blueprint chapter names may not match the coverage labels.`);
+            }
+          } else {
+            // No blueprint content to graft from → discard the incomplete plan and
+            // let the deterministic fallback below build a complete one.
+            console.warn(`Roadmap still omits ${stillMissing.join(', ')} and no blueprint is available — discarding the incomplete plan.`);
+            roadmapData = null;
+          }
+        }
       }
     } catch (err) {
       console.warn('Groq roadmap generation failed, generating fallback roadmap:', err.message);
+    }
+
+    // Generation unavailable → build the plan from the real syllabus blueprint
+    // before considering the generic template, so an outage still produces a
+    // roadmap made of actual chapters rather than placeholder day titles.
+    if (!roadmapData || !validateRoadmapJSON(roadmapData)) {
+      const fromBlueprint = buildBlueprintRoadmap(diagnostic.grade, diagnostic.subject, subSubject, weakTopics);
+      if (fromBlueprint) {
+        console.warn(`Roadmap generation unavailable — built a ${fromBlueprint.days.length}-day plan from the syllabus blueprint.`);
+        roadmapData = fromBlueprint;
+      }
     }
 
     if (!roadmapData || !validateRoadmapJSON(roadmapData)) {
@@ -542,8 +784,11 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
 
     const defaultResource = getResourceLinkForTopic(diagnostic.grade, diagnostic.subject, subSubject);
 
-    const formattedDays = roadmapData.days.map((d, index) => ({
-      dayNumber: d.dayNumber || index + 1,
+    // Clamp to the documented range. validateRoadmapJSON tolerates 7-25 so a
+    // slightly-off model response is not thrown away, but what we STORE stays
+    // inside 10-15 — remediation (Feature 12) grows the plan from here.
+    const formattedDays = roadmapData.days.slice(0, ROADMAP_MAX_DAYS).map((d, index) => ({
+      dayNumber: index + 1,
       topic: d.topic,
       focus: d.focus,
       resourceLink: defaultResource,
@@ -644,9 +889,17 @@ router.get('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
       // Note: If fetchYoutubeResources returns [], contentGenerated is still set to true with resources: [] to prevent infinite retries.
       const realResources = await fetchYoutubeResources(targetDay.topic, roadmap.subject, roadmap.grade);
 
-      targetDay.content = proseContent;
       targetDay.resources = realResources;
-      targetDay.contentGenerated = true;
+      // Only mark the day generated when there is a REAL lesson to cache. Marking it
+      // on failure is what used to freeze a placeholder in place forever; leaving it
+      // unset means the next visit tries again, and the videos are still shown
+      // meanwhile so the day is not empty.
+      if (proseContent) {
+        targetDay.content = proseContent;
+        targetDay.contentGenerated = true;
+      } else {
+        console.warn(`Day ${targetDay.dayNumber} lesson generation unavailable — not caching, will retry on next view.`);
+      }
       await roadmap.save();
     }
 
@@ -704,6 +957,10 @@ router.get('/:id/day/:dayNumber', authMiddleware, async (req, res) => {
       topic: displayTopic,
       focus: displayFocus,
       content: displayContent,
+      // False when the lesson could not be generated. The client shows a retry
+      // rather than an empty panel, and the day is NOT cached, so revisiting
+      // regenerates. Videos and the quiz still work in the meantime.
+      contentAvailable: !!targetDay.contentGenerated,
       resources: targetDay.resources || [],
       completed: targetDay.completed,
       estimatedMinutes: targetDay.estimatedMinutes,
@@ -862,6 +1119,7 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
     }
 
     // Generate + cache once. Consistent quiz on every revisit thereafter.
+    const wasCached = !!day.moduleQuiz?.generated && !!(day.moduleQuiz.questions || []).length;
     if (!day.moduleQuiz?.generated || !(day.moduleQuiz.questions || []).length) {
       let quizData = null;
       try {
@@ -908,7 +1166,55 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
       // (type-agnostic — MCQ and written alike).
       const { subtopics, questions: canonQuestions } = canonicalizeSubtopics(quizData.subtopics, built);
       day.subtopics = subtopics;
-      day.moduleQuiz = { generated: true, generatedAt: new Date(), questions: canonQuestions };
+
+      // ── Workstream D: figures are attached BEFORE the cache write ──
+      // A module quiz is generated once and served for the life of the roadmap, so
+      // the question and its figure have to be cached as ONE unit. Writing the
+      // questions first and attaching afterwards would mean a revisit could serve a
+      // figureless question that the orphan guard had already waved through against
+      // the figure it expected to be there.
+      const dayChapter = chapterForTopic(
+        getBlueprint(roadmap.grade, roadmap.subject, roadmap.subSubject), day.topic, normalizeTopic
+      );
+      // Absence of a blueprint entry is NOT a decision that this course gets no
+      // figures. The blueprint covers the exam grades only; the taxonomy covers all
+      // 280 course identities. Gating solely on the chapter meant a Class 6 Maths
+      // module quiz silently never attempted a figure while a Class 6 Maths PRACTICE
+      // quiz did — same student, same subject, different behaviour, nothing surfacing
+      // it. So the chapter is used when it exists, and otherwise this falls through to
+      // the subject-level gate rather than answering `false` from a missing row.
+      const subjectEligible = subjectDiagramEligible(roadmap.subject, roadmap.subSubject);
+      if (dayChapter || subjectEligible) {
+        // With a chapter, every question on the day belongs to it (no per-question
+        // topic matching). Without one, eligibility was already decided at subject
+        // level, so the predicate says yes and the day's topic labels the prompt.
+        if (dayChapter) {
+          canonQuestions.forEach((q) => { if (q.type !== 'written') q.chapterId = dayChapter.id; });
+        }
+        await attachDiagrams(canonQuestions, {
+          grade: roadmap.grade,
+          subject: roadmap.subject,
+          subSubject: roadmap.subSubject,
+          ...(dayChapter
+            ? { chapters: [dayChapter] }
+            : { isEligible: () => true, topicLabel: day.topic }),
+          // 8KB, not the 50KB general cap: this SVG lives inside the Roadmap document
+          // for good, alongside lesson prose, attempts and video progress.
+          maxBytes: CACHED_SVG_MAX_BYTES,
+          share: DIAGRAM_SHARE_MODULE_QUIZ,
+          // This quiz is cached for the life of the roadmap, so the sampling decision
+          // is final. Without this the retry pass on the next day fetch would treat
+          // every unsampled question as a failed one.
+          finalizeUnselected: true
+        });
+      }
+
+      // Immediately before the write, and after diagrams are attached — a question
+      // that says "in the figure below" without one is unanswerable, and cached that
+      // way it stays unanswerable forever.
+      const { safe: cacheable } = rejectOrphanedFigureQuestions(canonQuestions);
+
+      day.moduleQuiz = { generated: true, generatedAt: new Date(), questions: cacheable };
       roadmap.markModified('days');
       await roadmap.save();
     } else if (!(day.subtopics || []).length && (day.moduleQuiz.questions || []).length) {
@@ -919,6 +1225,48 @@ router.get('/:id/day/:dayNumber/quiz', authMiddleware, async (req, res) => {
       day.moduleQuiz.questions = canonQuestions;
       roadmap.markModified('days');
       await roadmap.save();
+    }
+
+    // ── Workstream D: one retry for a figure that was never actually attempted ──
+    // Only on an ALREADY-cached quiz. A quiz generated a few lines above has just had
+    // its one shot; retrying inside the same request would double the cost of a
+    // provider that is currently failing, which is precisely when not to.
+    if (wasCached) {
+      const chapters = getBlueprint(roadmap.grade, roadmap.subject, roadmap.subSubject)?.chapters || [];
+      const byId = new Map(chapters.map((c) => [c.id, c]));
+      // Same subject-level fall-through as the generate path above: an empty chapter
+      // map means "this course is not in the blueprint", not "this course gets no
+      // figures". Without it the retry is unreachable for every non-exam grade.
+      const subjEligible = subjectDiagramEligible(roadmap.subject, roadmap.subSubject);
+      const retryable = (day.moduleQuiz.questions || []).filter((q) => needsDiagramRetry(q, byId, subjEligible));
+      if (retryable.length) {
+        console.log(`Module quiz day ${day.dayNumber}: retrying ${retryable.length} unattempted figure(s).`);
+        await attachDiagrams(retryable, {
+          grade: roadmap.grade,
+          subject: roadmap.subject,
+          subSubject: roadmap.subSubject,
+          // The same fall-through once more, because attachDiagrams applies its OWN
+          // chapter-based eligibility filter: handing it an empty chapter list would
+          // discard every question needsDiagramRetry just selected, and the retry
+          // would silently do nothing for non-blueprint courses.
+          ...(chapters.length
+            ? { chapters }
+            : { isEligible: () => true, topicLabel: day.topic }),
+          maxBytes: CACHED_SVG_MAX_BYTES,
+          // Not DIAGRAM_SHARE_MODULE_QUIZ: this list was ALREADY filtered down to the
+          // questions that should have a figure and do not. Re-applying the 0.35 share
+          // would sample a third of an already-sampled set, so most retries would
+          // silently never happen.
+          share: 1
+        });
+        // EXACTLY one retry. Burn the attempt whatever the outcome, including another
+        // timeout — otherwise a persistently degraded provider is re-called on every
+        // single day view, forever, and the student pays that latency for a figure
+        // that is not coming.
+        retryable.forEach((q) => { q.diagramAttempted = true; });
+        roadmap.markModified('days');
+        await roadmap.save();
+      }
     }
 
     // Localize quiz questions to Hindi on demand (cached on the question subdocs).
@@ -1017,7 +1365,13 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, requireRole('stud
         selectedIndex,
         correctIndex: q.correctIndex,
         isCorrect,
-        topic: q.topic || 'General'
+        topic: q.topic || 'General',
+        // Carry the figure into the attempt record. The orphan guard only rejects a
+        // question that references a figure it does NOT have — a question that HAS one
+        // and says "as shown" passes correctly, and would then be reviewed with the
+        // figure missing. Copied rather than looked up so the review still renders if
+        // the cached quiz is ever regenerated.
+        ...(q.diagram?.svg ? { diagram: { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' } } : {})
       };
     }));
 
@@ -1096,7 +1450,9 @@ router.post('/:id/day/:dayNumber/quiz/submit', authMiddleware, requireRole('stud
           correctIndex: q.correctIndex,
           isCorrect: r.isCorrect,
           topic: q.topic || 'General',
-          explanation: useHi ? (q.translatedHindiExplanation || q.explanation || '') : (q.explanation || '')
+          explanation: useHi ? (q.translatedHindiExplanation || q.explanation || '') : (q.explanation || ''),
+          // Workstream D — the review must show the same figure the question was answered with.
+          ...(q.diagram?.svg ? { diagram: { svg: q.diagram.svg, alt: q.diagram.alt || '', altHindi: q.diagram.altHindi || '' } } : {})
         };
       })
     });

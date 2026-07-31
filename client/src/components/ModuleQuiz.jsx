@@ -9,6 +9,7 @@ import NarrationPrompt from './NarrationPrompt.jsx';
 import { primeAudio } from '../utils/audioPriming.js';
 import { getLocalDate } from '../utils/streak.js';
 import { WrittenInput, WrittenReview, isWrittenAnswered } from './WrittenQuestion.jsx';
+import QuestionDiagram from './QuestionDiagram.jsx';
 
 // Phase 3 + result-visibility fix: per-day module quiz. Questions are generated
 // + cached server-side; this component presents them, submits answers, shows the
@@ -143,6 +144,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
               </h4>
               <SpeakerButton audioEndpoint={`/roadmap/${roadmapId}/day/${dayNumber}/quiz/question/${qi}/audio?lang=${language}`} subject={subject} size={16} />
             </div>
+            <QuestionDiagram diagram={q.diagram} />
             {q.type === 'written' ? (
               <WrittenReview
                 answer={q.writtenAnswer}
@@ -295,6 +297,9 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
                   size={16}
                 />
               </div>
+              {/* Workstream D — rendered as a data-URI <img>, which cannot execute
+                  script even if server-side sanitisation were bypassed. */}
+              <QuestionDiagram diagram={q.diagram} />
               {q.type === 'written' ? (
                 <WrittenInput
                   value={answers[qi]}

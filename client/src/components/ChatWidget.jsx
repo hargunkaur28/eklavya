@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { playNarration, stopNarration, subscribe as subscribeNarration } from '../utils/narrationController.js';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -242,104 +243,56 @@ export default function ChatWidget() {
 
   // ── Speaker (TTS) ──
   const stopAudio = useCallback(() => {
-    if (currentAudioRef.current) {
-      if (currentAudioRef.current instanceof HTMLAudioElement) {
-        currentAudioRef.current.pause();
-        currentAudioRef.current.currentTime = 0;
-      }
-      currentAudioRef.current = null;
-    }
-    window.speechSynthesis?.cancel();
+    // Workstream F: the widget is mounted GLOBALLY (outside <Routes>), so it never
+    // unmounts on navigation — a reply it started would otherwise talk over every page
+    // the student visited next. It owned a second HTMLAudioElement, which was the
+    // other half of the overlap: two owners meant no single stop.
+    stopNarration();
     setPlayingMsgId(null);
   }, []);
 
   const handleSpeak = useCallback(async (msgId, text) => {
-    // If already playing this message, stop
-    if (playingMsgId === msgId) {
-      stopAudio();
-      return;
-    }
+    if (playingMsgId === msgId) { stopNarration(); setPlayingMsgId(null); return; }
 
-    // Stop any currently playing audio
-    stopAudio();
+    const speakLang = resolveNarrationLang({
+      subject: activeRoadmap?.subject,
+      pref: user?.narrationLanguagePref,
+      siteLang: language
+    });
 
     setSpeakerLoading(msgId);
+    setPlayingMsgId(msgId);
 
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const speakLang = resolveNarrationLang({
-        subject: activeRoadmap?.subject,
-        pref: user?.narrationLanguagePref,
-        siteLang: language
-      });
-
-      const res = await fetch(`${API_BASE}/chat/tts`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ text, language: speakLang })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.audio) {
-          // Play Sarvam TTS audio
-          const audioSrc = `data:audio/wav;base64,${data.audio}`;
-          const audio = new Audio(audioSrc);
-          currentAudioRef.current = audio;
-          setPlayingMsgId(msgId);
-          setSpeakerLoading(null);
-
-          audio.onended = () => {
-            setPlayingMsgId(null);
-            currentAudioRef.current = null;
-          };
-          audio.onerror = () => {
-            setPlayingMsgId(null);
-            currentAudioRef.current = null;
-          };
-
-          await audio.play();
-          return;
+    await playNarration({
+      ownerId: `chat-${msgId}`,
+      resolve: async (signal) => {
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${API_BASE}/chat/tts`, {
+          method: 'POST', headers, signal,
+          body: JSON.stringify({ text, language: speakLang })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.audio) return { src: `data:audio/wav;base64,${data.audio}` };
         }
-      }
+        // Sarvam unavailable — hand the raw text to the controller's Web Speech path
+        // rather than calling speechSynthesis here. One owner, one queue.
+        return { speak: { text, lang: speakLang } };
+      },
+      fallback: { text, lang: speakLang },
+      onEnded: () => { setPlayingMsgId(null); setSpeakerLoading(null); },
+      onError: () => { setPlayingMsgId(null); setSpeakerLoading(null); },
+      prime: true
+    });
+    setSpeakerLoading(null);
+  }, [playingMsgId, token, language, activeRoadmap, user]);
 
-      // Sarvam failed — fall back to browser speechSynthesis
-      throw new Error('Sarvam TTS failed');
-    } catch (err) {
-      console.warn('TTS primary failed, trying browser fallback:', err.message);
-      setSpeakerLoading(null);
-
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
-        utterance.rate = 0.95;
-
-        setPlayingMsgId(msgId);
-        currentAudioRef.current = 'speechSynthesis'; // sentinel
-
-        utterance.onend = () => {
-          setPlayingMsgId(null);
-          currentAudioRef.current = null;
-        };
-        utterance.onerror = (e) => {
-          if (e.error !== 'interrupted' && e.error !== 'canceled') {
-            console.warn('Browser TTS error:', e);
-          }
-          setPlayingMsgId(null);
-          currentAudioRef.current = null;
-        };
-
-        window.speechSynthesis.speak(utterance);
-      } else {
-        setSpeakerLoading(null);
-      }
-    }
-  }, [playingMsgId, stopAudio, token, language]);
-
-
+  // The widget outlives every route, so it must clear its own indicator when a route
+  // change (or another speaker) stops the narration it started.
+  useEffect(() => subscribeNarration((st) => {
+    if (!String(st.ownerId || '').startsWith('chat-')) { setPlayingMsgId(null); setSpeakerLoading(null); }
+  }), []);
 
   // ── Navigate Handler ──
   const handleNavigate = useCallback((route) => {

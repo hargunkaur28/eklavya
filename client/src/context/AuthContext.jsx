@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useLanguage } from './LanguageContext.jsx';
+import { clearAllDrafts } from '../utils/onboardingDraft.js';
 
 const AuthContext = createContext(null);
 
@@ -112,10 +113,19 @@ export function AuthProvider({ children }) {
   // Helper fetch with auth token
   const authFetch = useCallback(async (endpoint, options = {}) => {
     const currentToken = getStoredToken();
+    // A FormData body MUST NOT carry an explicit Content-Type: the browser has to set
+    // it itself so it can append the multipart boundary. Defaulting to
+    // application/json here meant a file upload was sent labelled as JSON, and
+    // express.json() rejected the multipart payload with a 400 before the route ran
+    // ("Unexpected token '-', \"------WebK\"..."). Passing `headers: {}` at the call
+    // site does NOT fix it — spreading an empty object cannot remove a key — so the
+    // decision belongs here, where the body type is known.
+    const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const headers = {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(options.headers || {})
     };
+    if (isFormData) delete headers['Content-Type'];
     if (currentToken) {
       headers['Authorization'] = `Bearer ${currentToken}`;
     }
@@ -184,6 +194,38 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     refreshUser();
   }, [refreshUser]);
+
+  // Workstream B: save the onboarding profile and mirror the result onto local user
+  // state IMMEDIATELY.
+  //
+  // This optimistic update is load-bearing, not a nicety. ProtectedRoute redirects a
+  // student with `onboardingCompleted === false` to /onboarding/profile. If the
+  // completion handler navigated away while local state still said `false`, the
+  // guard would bounce them straight back into the flow they just finished — the
+  // same infinite-loop family as the route not exempting itself. Setting the flag
+  // here means navigation is safe without waiting for a /me round trip.
+  const saveProfileDetails = useCallback(async (details) => {
+    const res = await authFetch('/auth/profile-details', { method: 'PATCH', body: JSON.stringify(details) });
+    const data = await res.json();
+    if (!res.ok) {
+      const err = new Error(data.error || 'PROFILE_SAVE_FAILED');
+      err.code = data.error;          // server CODE, mapped to language client-side
+      err.fields = data.fields || {}; // per-field codes
+      throw err;
+    }
+    setUser((prev) => (prev ? { ...prev, onboardingCompleted: true, profile: data.profile } : prev));
+    return data;
+  }, [authFetch]);
+
+  // Consent withdrawal (DPDP). Removes the envelope, last4 and consent timestamp
+  // together, and refreshes local state so Settings stops showing a masked value.
+  const removeAadhaar = useCallback(async () => {
+    const res = await authFetch('/auth/profile/aadhaar', { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'PROFILE_SAVE_FAILED');
+    setUser((prev) => (prev ? { ...prev, profile: data.profile } : prev));
+    return data.profile;
+  }, [authFetch]);
 
   // PATCH account-level narration/voice prefs and mirror them onto local user state.
   const updatePreferences = useCallback(async (patch) => {
@@ -378,6 +420,10 @@ export function AuthProvider({ children }) {
   const logout = () => {
     removeStoredToken();
     try { localStorage.removeItem(SELECTED_ROADMAP_KEY); } catch { /* ignore */ }
+    // Workstream B: an onboarding draft that outlives the session is a shared-device
+    // leak — the next student on a school machine would find the previous one's
+    // father's name, school and phone prefilled. Cleared with the token, not after it.
+    clearAllDrafts();
     setToken(null);
     setUser(null);
     setActiveRoadmapState(null);
@@ -404,6 +450,8 @@ export function AuthProvider({ children }) {
         changePassword,
         updateProfile,
         updatePreferences,
+        saveProfileDetails,
+        removeAadhaar,
         updateAdminCredentials,
         uploadProfilePhoto,
         removeProfilePhoto,

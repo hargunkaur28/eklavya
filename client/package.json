@@ -6,9 +6,23 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "test:units": "node test-note-save.mjs && node test-note-paste.mjs",
+    "accept:onboarding": "node acceptance-onboarding.mjs",
+    "accept:notes": "node acceptance-mynotes.mjs",
+    "accept:notes-tree": "node acceptance-notes-tree.mjs",
+    "accept:narration": "node acceptance-narration.mjs",
+    "verify:narration": "node verify-narration-stop.mjs"
   },
   "dependencies": {
+    "@tiptap/extension-image": "2.11.5",
+    "@tiptap/extension-placeholder": "2.11.5",
+    "@tiptap/extension-task-item": "2.11.5",
+    "@tiptap/extension-task-list": "2.11.5",
+    "@tiptap/extension-underline": "2.11.5",
+    "@tiptap/pm": "2.11.5",
+    "@tiptap/react": "2.11.5",
+    "@tiptap/starter-kit": "2.11.5",
     "@vitejs/plugin-react": "^5.0.0",
     "framer-motion": "^12.42.2",
     "gsap": "^3.15.0",

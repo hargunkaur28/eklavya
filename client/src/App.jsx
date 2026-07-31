@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect , useRef} from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { stopNarration } from './utils/narrationController.js';
 import { courses } from './data/courses.js';
 import { LanguageProvider } from './context/LanguageContext.jsx';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
@@ -20,6 +21,7 @@ import ChangePasswordPage from './pages/ChangePasswordPage.jsx';
 import ProfilePage from './pages/ProfilePage.jsx';
 import MentorPage from './pages/MentorPage.jsx';
 import Onboarding from './components/Onboarding.jsx';
+import ProfileOnboarding from './pages/ProfileOnboarding.jsx';
 import RoadmapDashboard from './components/RoadmapDashboard.jsx';
 import ParentDashboard from './components/ParentDashboard.jsx';
 import AdminLoginPage from './pages/AdminLoginPage.jsx';
@@ -119,6 +121,29 @@ function AuthPageWrapper({ initialTab }) {
   );
 }
 
+// Workstream F: narration must not survive a route change. Mounted once, beside
+// ScrollToTop, for the same reason — it is a property of navigation, not of any page.
+// A component that starts narration cannot be trusted to stop it, because by the time
+// it matters that component has already unmounted.
+function NarrationStopper() {
+  const { pathname } = useLocation();
+  const firstRun = useRef(true);
+  useEffect(() => {
+    // SKIP THE FIRST RUN. A route effect fires on mount as well as on change, and on
+    // mount there is by definition nothing to stop — but there IS something about to
+    // start: React runs effects bottom-up, so a page's autoPlay effect has already
+    // scheduled its narration by the time this parent effect runs. Stopping here would
+    // kill auto-narration on every single page load, and the symptom is nasty to
+    // diagnose: manual speaker buttons work perfectly, autoplay just never plays, and
+    // nothing errors. Only a TRANSITION should stop anything.
+    if (firstRun.current) { firstRun.current = false; return; }
+    stopNarration();
+  }, [pathname]);
+  // Also on unmount, which covers a full teardown (logout) that never changes pathname.
+  useEffect(() => stopNarration, []);
+  return null;
+}
+
 function ScrollToTop() {
   const { pathname } = useLocation();
 
@@ -135,6 +160,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <ScrollToTop />
+          <NarrationStopper />
           <ChatWidget />
           <Routes>
             <Route path="/" element={<Home />} />
@@ -146,6 +172,20 @@ export default function App() {
                 AdminDashboard self-guards on role and redirects to /admin/login. */}
             <Route path="/admin/login" element={<PageShell><AdminLoginPage /></PageShell>} />
             <Route path="/admin" element={<PageShell><AdminDashboard /></PageShell>} />
+            {/* Workstream B: the profile flow. Wrapped in ProtectedRoute (a session is
+                required) — ProtectedRoute exempts this exact path from its own
+                onboarding redirect, otherwise an incomplete student would be
+                redirected here forever. No PageShell: the flow renders its own
+                header, including the language toggle, because this is the one screen
+                a student cannot skip past to find the toggle later. */}
+            <Route
+              path="/onboarding/profile"
+              element={
+                <ProtectedRoute>
+                  <PageShell><ProfileOnboarding /></PageShell>
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/onboarding"
               element={

@@ -5,45 +5,26 @@
 // Fallback chain: Sarvam Translate → Groq translation → English + disclaimer note
 
 import { sarvamTranslate } from './sarvamClient.js';
+import { callGroqChat } from './groqClient.js';
 
 /**
  * Groq-based translation fallback when Sarvam is unavailable.
  * Same model/prompt pattern as translateAndCache.js's translateWithGroqFallback.
  */
+// Routed through the shared client so this fallback gets the 70b → 8b → OpenAI
+// chain and the rate-limit circuit breaker, instead of giving up on the first 429.
 async function groqTranslateFallback(englishText) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey || apiKey === 'gsk_demo_key') {
-    throw new Error('Groq API key not configured');
-  }
-
-  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        {
-          role: 'system',
-          content: 'Translate the following into natural, conversational Hindi in Devanagari script. Return ONLY the translated text, nothing else. No English commentary, intro, or quotation marks.'
-        },
-        {
-          role: 'user',
-          content: englishText
-        }
-      ],
-      temperature: 0.2
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Groq API responded with status ${response.status}`);
-  }
-
-  const data = await response.json();
-  const translated = data.choices?.[0]?.message?.content?.trim();
+  const raw = await callGroqChat(
+    [
+      {
+        role: 'system',
+        content: 'Translate the following into natural, conversational Hindi in Devanagari script. Return ONLY the translated text, nothing else. No English commentary, intro, or quotation marks.'
+      },
+      { role: 'user', content: englishText }
+    ],
+    { temperature: 0.2 }
+  );
+  const translated = (raw || '').trim();
 
   if (!translated || translated.trim() === englishText.trim()) {
     throw new Error('Groq returned empty or identical text');

@@ -30,14 +30,36 @@ export function writtenStyleFor(subject, subSubject) {
 // that otherwise splits "Adjectives" from "Adjective Description" in weak-topic
 // aggregation. Canonicalization still normalizes as a backstop; this just makes
 // an exact match far more likely. Empty list → free-generate (e.g. practice mode).
-export async function generateWritten(grade, subject, topic, count, style = 'short', subtopics = []) {
+// `grounding` (Workstream A2): the syllabus blueprint's difficulty anchor and
+// calibration exemplars for this grade+subject. Written prompts are grounded the
+// SAME way MCQs are, so an opt-in written question can't drift below grade level
+// while the MCQs around it are board-standard. Optional — omitted by callers that
+// have no blueprint (practice mode), which keeps the old behaviour exactly.
+export async function generateWritten(grade, subject, topic, count, style = 'short', subtopics = [], grounding = null) {
   const kind = style === 'essay' ? 'essay/paragraph-writing' : 'short written-answer';
   const len = style === 'essay' ? 'a paragraph/essay prompt (expects 3-6 sentences)' : 'a short-answer prompt (expects 1-3 sentences)';
   const list = Array.isArray(subtopics) ? subtopics.filter(s => typeof s === 'string' && s.trim()) : [];
   const topicRule = list.length
     ? `Tag each question's "topic" with EXACTLY ONE label chosen VERBATIM from this list (do not invent new labels or vary the wording): ${JSON.stringify(list)}.`
     : `Set "topic" to a specific sub-topic within "${topic}".`;
-  const prompt = `Generate ${count} ${kind} question(s) for a student${grade ? ` in ${grade}` : ''} on the subject "${subject}", topic "${topic}".
+
+  const groundingBlock = (grounding && grounding.difficultyAnchor && grounding.exemplars)
+    ? `
+
+DIFFICULTY ANCHOR — the cognitive level every prompt must hit:
+${grounding.difficultyAnchor}
+
+CALIBRATION EXEMPLARS for this grade and subject:
+- TOO EASY (reject level): "${grounding.exemplars.tooEasy}"
+- CORRECT (this is the level you must hit): "${grounding.exemplars.correct}"
+- TOO HARD (beyond the syllabus): "${grounding.exemplars.tooHard}"
+
+Your prompt must demand reasoning at the difficulty of the CORRECT exemplar. If it is as simple as the TOO EASY exemplar, it is wrong and unusable.${Array.isArray(grounding.chapters) && grounding.chapters.length ? `
+Draw the prompts from these syllabus chapters: ${JSON.stringify(grounding.chapters.map(c => c.name))}.` : ''}
+`
+    : '';
+
+  const prompt = `Generate ${count} ${kind} question(s) for a student${grade ? ` in ${grade}` : ''} on the subject "${subject}", topic "${topic}".${groundingBlock}
 Return ONLY JSON: { "questions": [ { "question": "the prompt", "expectedPoints": ["a key point a correct answer must include", "..."], "topic": "sub-topic" } ] }
 Each question is ${len}. ${topicRule} Provide 3 to 5 concrete expectedPoints per question — the specific facts/ideas a correct answer should contain (used to grade it). Do NOT include multiple-choice options. Raw JSON only.`;
 
