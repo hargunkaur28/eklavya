@@ -50,7 +50,7 @@ export default function ProfileOnboarding() {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
   const [form, setForm] = useState(() => ({
-    age: '', studyMedium: '', studyMediumOther: '', fatherName: '', schoolName: '', schoolCity: '',
+    age: '', studyMedium: '', fatherName: '', schoolName: '', schoolCity: '',
     phoneNumber: '', location: { village: '', city: '', state: '' },
     // Aadhaar and consent live ONLY here, in component state. They are absent from
     // the draft allow-list, so a reload costs re-entry rather than leaving a
@@ -123,7 +123,9 @@ export default function ProfileOnboarding() {
   // Client-side gate for the CURRENT step only — optional fields never block.
   const stepValid = useMemo(() => {
     if (stepDef.id === 'age') return Number.isInteger(Number(form.age)) && Number(form.age) >= 5 && Number(form.age) <= 25;
-    if (stepDef.id === 'board') return !!form.studyMedium && (form.studyMedium !== 'Other' || form.studyMediumOther.trim().length >= 2);
+    // Workstream H: boards are a closed two-entry set, so a selection is the whole
+    // gate — there is no 'Other' free-text branch left to validate.
+    if (stepDef.id === 'board') return !!form.studyMedium;
     if (stepDef.id === 'family') return form.fatherName.trim().length >= 2;
     if (stepDef.id === 'school') return form.schoolName.trim().length >= 2 && form.schoolCity.trim().length >= 2;
     return true; // optional step
@@ -172,7 +174,7 @@ export default function ProfileOnboarding() {
     try {
       await saveProfileDetails({
         age: Number(form.age),
-        studyMedium: form.studyMedium === 'Other' ? form.studyMediumOther.trim() : form.studyMedium,
+        studyMedium: form.studyMedium,
         fatherName: form.fatherName.trim(),
         schoolName: form.schoolName.trim(),
         schoolCity: form.schoolCity.trim(),
@@ -276,14 +278,6 @@ export default function ProfileOnboarding() {
                       </button>
                     ))}
                   </div>
-                  {form.studyMedium === 'Other' && (
-                    <input
-                      ref={inputRef} className="pf-input" type="text" maxLength={60}
-                      value={form.studyMediumOther} placeholder={t.boardOtherPlaceholder}
-                      onChange={(e) => { set({ studyMediumOther: e.target.value }); clearFieldError('studyMedium'); }}
-                      onKeyDown={(e) => e.key === 'Enter' && next()}
-                    />
-                  )}
                   {err('studyMedium')}
                 </>
               ) : stepDef.id === 'family' ? (

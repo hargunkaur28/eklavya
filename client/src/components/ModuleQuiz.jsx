@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useScrollToResult } from '../utils/useScrollToResult.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
@@ -25,6 +26,9 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);      // post-submit result
+  // Only a FRESH submit scrolls. Revisiting a day already shows the banner at the
+  // top of the card, and yanking the page on every revisit would be noise.
+  const resultRef = useScrollToResult(status === 'result');
   const [lastResult, setLastResult] = useState(null); // persisted last attempt
   const [passThreshold, setPassThreshold] = useState(0.7);
   const [promptDismissed, setPromptDismissed] = useState(false); // Phase 3
@@ -102,7 +106,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
     const pct = data.total > 0 ? Math.round((data.score / data.total) * 100) : 0;
     return (
       <>
-        <div className={`quiz-result-banner ${data.passed ? 'passed' : 'failed'}`}>
+        <div ref={resultRef} className={`quiz-result-banner ${data.passed ? 'passed' : 'failed'}`}>
           <div className="quiz-result-score">
             <span className="quiz-result-num">{data.score} / {data.total}</span>
             <span className="quiz-result-pct">{pct}%</span>

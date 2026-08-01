@@ -64,6 +64,33 @@ check('a brand-new student is onboardingCompleted:false everywhere',
   signup.user?.onboardingCompleted === false && me.user?.onboardingCompleted === false,
   `signup=${signup.user?.onboardingCompleted} me=${me.user?.onboardingCompleted}`);
 
+
+// ── ADMIN SESSION RESTORE ──────────────────────────────────────────────────
+//
+// Added after an admin was logged out by EVERY page refresh. GET /auth/me threw on
+// the admin branch — it referenced getAdminCreds without importing it, and behind
+// that referenced  before its  declaration — so it returned 500. The
+// client treats any non-ok /auth/me as an invalid token and clears it, so a server
+// bug presented as an auth problem and nothing in the admin panel survived a reload.
+//
+// Every check in this file used a STUDENT token, so the whole admin branch was
+// unexercised and had evidently never run since it was written. Same blind-harness
+// shape as Rule 11: the suite was green about a path it never touched.
+{
+  const jwt = (await import("jsonwebtoken")).default;
+  const adminToken = jwt.sign({ role: "admin", adm: true }, process.env.JWT_SECRET, { expiresIn: "5m" });
+  const res = await fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${adminToken}` } });
+  check('an ADMIN token can restore its session via /auth/me', res.status === 200, `HTTP ${res.status}`);
+  const body = await res.json().catch(() => ({}));
+  check("the admin session carries role:admin", body.user?.role === "admin", JSON.stringify(body.user));
+  // Login and refresh must agree, which is what this whole file is about.
+  check("the admin session shape matches what /admin/login returns",
+    body.user && "id" in body.user && "name" in body.user && "email" in body.user && "role" in body.user,
+    JSON.stringify(body.user));
+  check("the admin session reports mustChangePassword as a real boolean",
+    typeof body.mustChangePassword === "boolean", JSON.stringify(body.mustChangePassword));
+}
+
 const failed = out.filter(([, p]) => !p);
 console.log(`\n${out.length - failed.length}/${out.length} checks passed`);
 if (failed.length) { console.log('FAILED:'); failed.forEach(([n]) => console.log('  - ' + n)); process.exit(1); }

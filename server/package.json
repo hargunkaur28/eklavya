@@ -28,7 +28,9 @@
     "test:nucleus": "node test-nucleus-figure.mjs",
     "test:svgsize": "node test-diagram-size-baseline.mjs",
     "clear:diagrams": "node src/scripts/clear-diagram-cache.js",
-    "test:subject": "node test-subject-competency.mjs"
+    "test:subject": "node test-subject-competency.mjs",
+    "test:board": "node test-board-reduction.mjs",
+    "test:pyq": "node test-pyq.mjs"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
@@ -44,6 +46,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.12.0",
     "multer": "^2.2.0",
+    "mupdf": "^1.28.0",
     "react": "^19.2.8",
     "sanitize-html": "^2.17.6"
   }

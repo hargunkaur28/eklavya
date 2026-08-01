@@ -19,6 +19,8 @@ import adminRoutes from './routes/admin.js';
 import mentorRoutes from './routes/mentor.js';
 import notesRoutes from './routes/notes.js';
 import myNotesRoutes from './routes/myNotes.js';
+import pyqRoutes from './routes/pyq.js';
+import pyqAdminRoutes from './routes/pyqAdmin.js';
 import { parentPasswordChangeGate } from './middleware/auth.js';
 import { startTempAudioCleanup, stopTempAudioCleanup } from './utils/textToSpeech.js';
 
@@ -128,6 +130,12 @@ app.use('/api/notes', notesRoutes);
 // Workstream C: My Notes — student-authored pages. A SEPARATE router from
 // /api/notes (Feature 18's AI generator + PDF), which stays untouched.
 app.use('/api/my-notes', parentPasswordChangeGate, myNotesRoutes);
+// Workstream I: Previous Year Questions. Two routers, split by audience rather than
+// by feature — /api/pyq is student-only (practice + exam), /api/pyq-admin is the
+// admin import pipeline and is the ONLY place allowed to create real-paper questions.
+app.use('/api/pyq', parentPasswordChangeGate, pyqRoutes);
+// No parent gate: admin is never a parent, same as /api/admin.
+app.use('/api/pyq-admin', pyqAdminRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -22,6 +22,30 @@ export default function Header({ mobileOpen, setMobileOpen }) {
     { label: t('nav.about'), href: '#why-choose' }
   ];
 
+  // The nav targets are all sections of the LANDING page, so a bare `#courses` only
+  // does anything when you are already on "/". From onboarding, the dashboard, or any
+  // other route the browser finds no such element and the link silently does nothing —
+  // which is exactly how it looked: a menu of items that refuse to be clicked.
+  //
+  // So: route home first when we are elsewhere, then scroll once the section exists.
+  const goToSection = (e, href) => {
+    e.preventDefault();
+    setMobileOpen(false);
+    const id = href.startsWith('#') ? href.slice(1) : '';
+    const onLanding = location.pathname === '/' || location.pathname === '';
+
+    const scroll = () => {
+      if (!id) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    if (onLanding) { scroll(); return; }
+    navigate('/');
+    // The landing page has to mount before the target exists. Two frames is enough
+    // for React to commit; a fixed timeout would either be flaky or needlessly slow.
+    requestAnimationFrame(() => requestAnimationFrame(scroll));
+  };
+
   const mobileNav = [
     { label: t('nav.home'), href: '#' },
     { label: t('nav.courses'), href: '#courses' },
@@ -36,7 +60,7 @@ export default function Header({ mobileOpen, setMobileOpen }) {
         <EklavyaLogo />
       </Link>
       <div className="desktop-nav-wrapper">
-        <GooeyNav items={navItems} initialActiveIndex={activeIndex} />
+        <GooeyNav items={navItems} initialActiveIndex={activeIndex} onNavigate={goToSection} />
       </div>
       <div className="header-actions">
         <button
@@ -112,7 +136,7 @@ export default function Header({ mobileOpen, setMobileOpen }) {
             <X size={22} />
           </button>
           {mobileNav.map((item) => (
-            <a key={item.label} href={item.href} onClick={() => setMobileOpen(false)}>
+            <a key={item.label} href={item.href} onClick={(e) => goToSection(e, item.href)}>
               {item.label}
             </a>
           ))}

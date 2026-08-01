@@ -38,31 +38,74 @@ const markRateLimited = (model) => {
  * Returns the message text, or null on any failure. Never throws, so callers can
  * fall through to another provider without a try/catch at every site.
  */
-export async function callOpenAIChat(messages, { model = 'gpt-4o-mini', temperature = 0.7, jsonMode = false, maxTokens } = {}) {
+export async function callOpenAIChat(
+  messages,
+  { model = 'gpt-4o-mini', temperature = 0.7, jsonMode = false, maxTokens, retries = 0, retryDelayMs = 2000 } = {}
+) {
   const key = process.env.OPENAI_API_KEY;
   if (!key || key === 'invalid_openai_key') return null;
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature,
-        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
-        ...(maxTokens ? { max_tokens: maxTokens } : {})
-      })
-    });
-    if (!res.ok) {
+
+  // `retries` defaults to 0, so every existing caller behaves EXACTLY as before.
+  //
+  // It exists because a transient 429 is indistinguishable from a hard failure at
+  // this function's boundary — both return null — and for callers whose fallback is
+  // cheap (a diagram degrades to a worse figure) that is fine. For the PYQ parse it
+  // is not: falling back means a whole paper is parsed on a text-only path and then
+  // CACHED AS GROUND TRUTH, so a momentary rate limit permanently degrades content
+  // that an admin will go on to trust. Measured during development — a run of ~60
+  // high-detail vision calls in quick succession tripped a limit and silently
+  // degraded an entire import, with only a boolean flag to show for it. A bulk
+  // corpus import is thousands of such calls, so this is a certainty, not a risk.
+  //
+  // Retried only on conditions that are actually transient. A 400 (bad request,
+  // max_tokens too large, malformed image) is never retried — retrying a request the
+  // API has rejected on its merits just triples the latency before the same failure.
+  const RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504]);
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+          ...(maxTokens ? { max_tokens: maxTokens } : {})
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        return data.choices?.[0]?.message?.content?.trim() || null;
+      }
+
+      if (RETRYABLE.has(res.status) && attempt < retries) {
+        // Honour Retry-After when the API sends one; otherwise exponential backoff.
+        const header = Number(res.headers.get('retry-after'));
+        const waitMs = Number.isFinite(header) && header > 0
+          ? header * 1000
+          : retryDelayMs * (2 ** attempt);
+        console.warn(`OpenAI '${model}' HTTP ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${retries}).`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+
       console.warn(`OpenAI '${model}' returned HTTP ${res.status}`);
       return null;
+    } catch (err) {
+      if (attempt < retries) {
+        const waitMs = retryDelayMs * (2 ** attempt);
+        console.warn(`OpenAI '${model}' call errored (${err.message}) — retrying in ${Math.round(waitMs / 1000)}s.`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      console.error(`OpenAI '${model}' call failed:`, err.message);
+      return null;
     }
-    const data = await res.json();
-    return data.choices?.[0]?.message?.content?.trim() || null;
-  } catch (err) {
-    console.error(`OpenAI '${model}' call failed:`, err.message);
-    return null;
   }
+  return null;
 }
 
 export async function callGroqChat(

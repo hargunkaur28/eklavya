@@ -14,6 +14,17 @@ export const GRADES = [
   'Class 11', 'Class 12'
 ];
 
+// ── Boards (Workstream H) — mirror of the server ────────────────────────────
+// Exactly the two boards the platform serves. See server/src/config/taxonomy.js
+// for why 'Other' and the seven unserved boards were removed rather than hidden.
+// MUST stay identical to the server; the drift test guards it.
+export const BOARDS = ['CBSE', 'Haryana Board (HBSE)'];
+
+export const BOARD_CODES = {
+  CBSE: 'CBSE',
+  'Haryana Board (HBSE)': 'HBSE'
+};
+
 // ── Sub-subjects (subject-splitting) ────────────────────────────────────────
 // Three subjects split into selectable sub-subjects; the LAST entry of each is
 // the "spans all sub-tracks" option (English → Fusion; Science / Social Science
@@ -32,6 +43,21 @@ export const FUSION_SUBSUBJECT = {
 
 const normalizeSubject = (s) => (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
 export const normalizeSubSubject = (ss) => (ss || '').toLowerCase().trim().replace(/\s+/g, ' ');
+export const normalizeBoard = (b) => (b || '').toLowerCase().trim().replace(/\s+/g, ' ');
+
+export function canonicalBoard(board) {
+  const n = normalizeBoard(board);
+  return BOARDS.find((b) => normalizeBoard(b) === n) || board;
+}
+
+export function isKnownBoard(b) {
+  const n = normalizeBoard(b);
+  return BOARDS.some((x) => normalizeBoard(x) === n);
+}
+
+export function boardCode(board) {
+  return BOARD_CODES[canonicalBoard(board)] || '';
+}
 
 export function canonicalSubject(subject) {
   const n = normalizeSubject(subject);

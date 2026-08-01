@@ -19,6 +19,8 @@
 // reloads. That is the correct trade: a few seconds of retyping against an
 // indefinite plaintext copy on a shared device.
 
+import { isKnownBoard } from '../data/taxonomy.js';
+
 // The draft is keyed PER USER, not globally.
 //
 // The shared-device reasoning that kept Aadhaar out of storage applies to the rest
@@ -35,7 +37,6 @@ const keyFor = (userId) => `${KEY_PREFIX}${userId || 'anon'}`;
 const DRAFTABLE = [
   'age',
   'studyMedium',
-  'studyMediumOther',
   'fatherName',
   'schoolName',
   'schoolCity',
@@ -50,6 +51,13 @@ function pickDraftable(state) {
   for (const k of DRAFTABLE) {
     if (state[k] !== undefined && state[k] !== null && state[k] !== '') out[k] = state[k];
   }
+  // Workstream H: a draft written before the board list was reduced can hold 'ICSE'
+  // or an 'Other' free-text board. Restoring it puts the flow in a state no button
+  // renders as selected, yet `stepValid` passes (a non-empty studyMedium) — so the
+  // student walks to the end and the submit dies on BOARD_NOT_SUPPORTED with the
+  // board step five screens behind them. Dropping it here returns them to an
+  // unanswered board question instead, which is the honest state.
+  if (out.studyMedium && !isKnownBoard(out.studyMedium)) delete out.studyMedium;
   return out;
 }
 

@@ -57,7 +57,27 @@ const userSchema = new mongoose.Schema({
   profile: {
     // Compulsory — the flow cannot be completed without these.
     age: { type: Number, default: null },
-    studyMedium: { type: String, default: '' },       // board; 'Other' resolves to free text
+    studyMedium: { type: String, default: '' },       // board; closed set — config/taxonomy.js BOARDS
+
+    // ── Workstream H: board reduction, existing accounts ────────────────────
+    // The board list dropped from nine entries (plus an 'Other' free-text escape)
+    // to the two the platform actually serves. Accounts holding a removed value are
+    // migrated by scripts/backfill-board.js, which EMPTIES studyMedium and parks the
+    // old value here rather than deleting it or guessing a replacement.
+    //
+    // Why preserve it: it is the student's own answer, it is the only thing
+    // `--rollback` can restore from, and "how many of our students said ICSE" is a
+    // real product question that a destructive migration would have thrown away.
+    // Nothing reads it for behaviour — it is never offered, never validated against,
+    // and never used to select a PYQ corpus. It is a record, not a fallback.
+    legacyStudyMedium: { type: String, default: '' },
+
+    // Set by the same backfill. The student is asked to re-pick ONCE on next login;
+    // the prompt clears this flag whether they choose or dismiss, so it can never
+    // become a modal they cannot get past. Deliberately NOT done by resetting
+    // `onboardingCompleted`, which would drag them through all five steps again to
+    // re-answer one question.
+    boardNeedsReselect: { type: Boolean, default: false },
     fatherName: { type: String, default: '' },
     schoolName: { type: String, default: '' },
     schoolCity: { type: String, default: '' },        // city OR village

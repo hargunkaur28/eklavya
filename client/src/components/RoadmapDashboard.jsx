@@ -17,6 +17,8 @@ import ParentAccessCard from './ParentAccessCard.jsx';
 import NotesGenerator from './NotesGenerator.jsx';
 import { WrittenReview } from './WrittenQuestion.jsx';
 import MyNotesPanel from './MyNotesPanel.jsx';
+import BoardReselectPrompt from './BoardReselectPrompt.jsx';
+import PyqPanel from './PyqPanel.jsx';
 
 export default function RoadmapDashboard() {
   const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
@@ -184,6 +186,11 @@ export default function RoadmapDashboard() {
 
   return (
     <div className="dashboard-bg">
+      {/* Workstream H. The dashboard is where a student lands after login, which
+          makes it the "next login" the board migration promised. It self-gates on
+          user.profile.boardNeedsReselect and renders nothing for everyone else, so
+          this costs an unaffected account exactly one falsy check. */}
+      <BoardReselectPrompt />
       <div className="dashboard-card">
       <DashboardSidebar
         activeSection={activeSection}
@@ -373,6 +380,17 @@ export default function RoadmapDashboard() {
         {/* PRACTICE MODE — Phase 6 */}
         {activeSection === 'practice' && (
           <PracticeMode roadmaps={roadmaps} defaultRoadmap={activeRoadmap} />
+        )}
+
+        {/* PREVIOUS YEAR QUESTIONS — Workstream I.
+            Scoped to the ACTIVE roadmap's grade/subject, the same identity practice
+            mode uses, so the corpus lookup matches what the student is studying. */}
+        {activeSection === 'pyq' && (
+          <PyqPanel
+            grade={activeRoadmap.grade}
+            subject={activeRoadmap.subject}
+            subSubject={activeRoadmap.subSubject || ''}
+          />
         )}
 
         {/* PROGRESS / WEAK TOPICS — Phase 4 */}

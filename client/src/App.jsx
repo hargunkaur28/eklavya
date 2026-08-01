@@ -5,6 +5,7 @@ import { courses } from './data/courses.js';
 import { LanguageProvider } from './context/LanguageContext.jsx';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import { scrollToTop } from './utils/scrollToTop.js';
 import Header from './components/Header.jsx';
 import Hero from './components/Hero.jsx';
 import Stats from './components/Stats.jsx';
@@ -148,7 +149,7 @@ function ScrollToTop() {
   const { pathname } = useLocation();
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    scrollToTop();
   }, [pathname]);
 
   return null;

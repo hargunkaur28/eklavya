@@ -833,6 +833,57 @@ a cap that needs raising.
       same suite had been failing at check 0. Worth fixing the watcher properly, but
       no browser test should depend on it.
 
+#### AMENDED (Workstream I): part of this now HAS a cause — but not the part labelled undiagnosed
+- **New evidence: duplicate dev servers demonstrably accumulate in this environment.**
+  Observed directly while debugging something else — **two `npm run dev` processes,
+  two vite processes, and seven orphaned `src/server.js` processes**, each holding a
+  different port and its own Mongo connection. The reason they accumulated is that
+  every cleanup command issued was `pkill`, **which does not exist in this Git Bash
+  environment**; it failed silently (stderr swallowed by `2>/dev/null`) and reported
+  success while doing nothing.
+- **This DOES explain the connection-failure symptom class.** With several servers
+  alive, a request can reach a *different process* than the one just restarted —
+  including a stale build or one dying from `EADDRINUSE`. A request to a process that
+  is going away is exactly the "`ERR_FAILED` / no `Access-Control-Allow-Origin`"
+  signature already documented above, and it is intermittent for the same reason.
+  Proven in this workstream: a browser talking to a server that predated the feature
+  returned 404s that looked like missing code.
+- **It does NOT explain the TTS-write correlation, so this entry is AMENDED, not
+  CLOSED.** Re-verified today: `UPLOADS_DIR` is
+  `path.join(__dirname, '../../uploads/audio')` from `src/utils`, i.e.
+  `server/uploads/audio`, which is genuinely outside `./src`. A correctly-scoped
+  `--watch-path=./src` should not fire on a TTS write, and the recorded observation
+  that it still did remains unaccounted for. Do not mark it solved.
+- [ ] **FIRST diagnostic step next time, before touching CORS, the watcher, or the
+      rate limiter: count the processes.**
+      `Get-NetTCPConnection -LocalPort 5000 -State Listen` for the owner, and
+      `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` for the full list with
+      command lines. If more than one server is alive, fix that before diagnosing
+      anything else — three plausible-looking wrong diagnoses already came out of this
+      symptom once.
+
+### Shell commands in this environment need VERIFYING, not assuming — it is Windows
+- **`pkill` is not available** in the Git Bash environment here, and neither are
+  several other Unix reflexes. It does not error usefully; combined with `2>/dev/null`
+  it reports success and has no effect.
+- **This is the same class as the harness bugs recorded elsewhere in this file**: an
+  operation that reports success and does nothing. A cleanup command is exactly where
+  that is most expensive, because the whole point is to leave a known-good state, and
+  "I already cleaned that up" then becomes a false premise for everything after it.
+- **Rule: verify the effect, not the exit code.** After stopping a process, check the
+  port is actually free. After deleting rows, count them. The check is one command and
+  it is the difference between a clean state and a confidently-asserted wrong one.
+- Windows equivalents that do work here:
+  | intent | do not use | use |
+  | :--- | :--- | :--- |
+  | kill by port | `pkill -f ...` | `Get-NetTCPConnection -LocalPort <p> -State Listen` then `Stop-Process -Id <pid> -Force` |
+  | list processes | `ps aux \| grep node` | `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` (gives full command lines) |
+  | confirm a port is free | assume | `curl` the health endpoint, or re-query `Get-NetTCPConnection` |
+- **Also recorded here because it cost real time:** ports **5060 and 5061** are SIP/SIPS
+  and sit on the WHATWG Fetch **blocked-ports list**. Node's `fetch()` refuses them
+  with an opaque `bad port` while `curl` connects happily — which reads as a broken
+  test suite rather than a bad port choice.
+
 ### Workstream G — diagnostic results still serve the OLD Hindi register (USER-FACING, do next)
 - **This is not tech debt. It is the first Hindi a student ever sees.** The diagnostic
   is the entry point — it runs before any roadmap, module quiz or practice session
@@ -938,3 +989,1100 @@ a cap that needs raising.
 - [ ] **Re-check this if `DIAGRAM_MODEL` changes.** A model that produces genuinely
       larger figures WOULD bias the baseline the way described above, and the check
       is the same one: confirm every non-figure is a decline rather than a drop.
+
+### Workstream H — board reduction: what was decided about existing accounts
+- **The board list is now CBSE + Haryana Board (HBSE).** Seven boards and the `Other`
+  free-text escape were removed. This is a product statement, not a cleanup: offering
+  a board we cannot supply a syllabus for was already a false promise, and once
+  Features 25/26 exist it becomes a promise of specific past papers that will never
+  appear.
+- **The migration EMPTIES rather than guesses, and preserves rather than deletes.**
+  `server/src/scripts/backfill-board.js` sets `profile.studyMedium = ''`, copies the
+  student's original answer to `profile.legacyStudyMedium`, and sets
+  `profile.boardNeedsReselect` so they are asked **once** on next login.
+  - *Why not leave the legacy value in place, non-selectable?* Because the board is
+    now the key the past-paper corpus is queried by. An account left on `ICSE`
+    resolves to "no papers available" on every subject, in every year, forever — and
+    the empty state is honest about the corpus while being silent about the real
+    cause, which is the stale profile.
+  - *Why not map ICSE to CBSE?* They are different boards. A silently re-boarded
+    student would be shown CBSE papers as if they were theirs — Design Rule 16 from
+    the other direction.
+  - *Why not reset `onboardingCompleted`?* That would push someone through all five
+    profile steps to re-answer one question. The flag drives a single prompt instead,
+    and it clears on dismiss as well as on choice so it cannot wedge an account.
+- [ ] **Run the dry-run against production data before applying.** It reports
+      per-board counts **before** it writes. A surprising number there is the signal
+      to stop and reconsider, not to type `--apply`.
+- [ ] **`backfill-board.log.json` is required for `--rollback`.** It records each
+      account's own previous board, because rollback restores per-account — a single
+      `updateMany` cannot, and writing one board to all of them is exactly the guess
+      the migration refused to make going forward.
+
+### Workstream I — PYQ corpus coverage: THE FEATURE'S VALUE IS BOUNDED BY CONTENT, NOT CODE
+- **This is the honest framing and it should not be softened.** Every acceptance
+  criterion for Features 25/26 passes against a corpus of **one seeded test paper**.
+  The code is complete; the feature is not *useful* until real papers are imported.
+  A Class 10 student opening Past Papers today sees the honest empty state, which is
+  correct behaviour and zero value.
+- **Import status — UPDATE THIS TABLE AS PAPERS ARE ADDED.**
+
+  | Board | Grade | Subject | Years imported | Status |
+  | :--- | :--- | :--- | :--- | :--- |
+  | CBSE | Class 10 | Maths | — | **none imported** |
+  | CBSE | Class 10 | Science | — | **none imported** |
+  | CBSE | Class 10 | Social Science | — | **none imported** |
+  | CBSE | Class 12 | Physics / Chemistry / Biology / Maths | — | **none imported** |
+  | HBSE | Class 10 | Maths / Science / Social Science | — | **none imported** |
+  | HBSE | Class 12 | core subjects | — | **none imported** |
+
+- [ ] **Target the realistic starting corpus: ~5 years across the core subjects for
+      both boards.** Both boards publish past papers publicly. At roughly 5 years x 4
+      subjects x 2 grades x 2 boards this is on the order of 80 papers — an
+      afternoon of admin work per board, not an engineering task.
+- [ ] **Budget the import calls.** One `PYQ_MODEL` (gpt-4o, vision, `detail: high`)
+      call **per page**. A 30-page paper is 30 calls; 80 papers is roughly 2,000-2,500
+      vision calls **one time**. This is a one-off content cost, not a per-student
+      runtime cost — price it before starting the bulk import rather than discovering
+      it midway.
+- [ ] **Every paper must be reviewed before publish, and the review is the point.**
+      A parse that is wrong looks exactly like a parse that is right. Publication is
+      already blocked when a question references a figure it does not have, or a
+      figure has no admin-written alt text — but nothing can block a *plausible wrong
+      transcription*, and only the admin can catch it.
+- [ ] **Check the `fallback` flag on every imported paper.** A paper parsed by the
+      Groq text-only fallback (OpenAI unavailable at import time) is flagged in the
+      review UI. Structure — sections, figure placement, marks in margins — is much
+      more likely to be wrong on that path. Prefer to **delete and re-import** such a
+      paper once OpenAI is reachable rather than hand-correcting it.
+
+### PYQ import runs on a PAID substrate — extend the diagram exception to it
+- **What changed.** `utils/parsePastPaper.js` calls **OpenAI first** (`PYQ_MODEL`,
+  currently `gpt-4o`, with vision) and uses Groq only as a text-only availability
+  fallback — the same inversion as `DIAGRAM_MODEL` and `JUDGE_MODEL`. Rationale is in
+  the file header. **Do not "harmonise" this path.**
+- **Consequence for the substrate caveat.** Parse quality joins diagrams and judges as
+  **NOT provisional**: it is measured on the substrate production will use. The other
+  numbers in this repo — question difficulty, difficulty-audit rejection rate, round
+  latency, translation register — are unchanged and still provisional, because they
+  still run through the rate-limited Groq chain.
+- **Measured so far (small sample, be honest about it).** One synthetic single-page
+  paper: 3 of 3 questions extracted, both sections identified, wording verbatim
+  (`"The HCF of 96 and 404 is: (a) 2 (b) 4 (c) 8 (d) 12"`), the figure-referencing
+  question correctly flagged `figureExpected`. **This is a smoke test on a clean
+  digitally-generated PDF, not a quality baseline** — a real scanned board paper with
+  multi-column layout and margin annotations is a materially harder input.
+- [x] **Establish the real baseline on the first genuine board paper.** DONE —
+      measured against the official CBSE Class 10 Science SQP. See "Parse quality on
+      a REAL board paper" near the end of this file. **The result is worse than this
+      section's synthetic smoke test implies: 71 questions extracted from a
+      39-question paper.** Read that section before planning the bulk import.
+- [ ] **Re-measure if `PYQ_MODEL` changes.** Same reasoning that invalidated the 8b
+      numbers: a different model is a different substrate. Parse accuracy is also the
+      one number here where a regression is silently cached as ground truth.
+
+### ~~PYQ figure crops are Cloudinary TRANSFORM URLs~~ — SUPERSEDED, the trade-off is GONE
+> **This section is obsolete. Figures are no longer crops of a rendered page.** They
+> are extracted from the PDF's own embedded image objects and uploaded as their own
+> assets, so there are no crop parameters to strip and no way to walk back up to the
+> full page. The exposure described below **no longer exists** — it was not mitigated,
+> it was designed out. See "Figures now come from the PDF's embedded image objects".
+>
+> Kept rather than deleted because the reasoning in the last bullet still stands on
+> its own: a crop is a presentation instruction, not an access control, and that
+> remains true for anything that might reach for the pattern later.
+
+
+- **What it is.** A figure's `diagramUrl` is a crop transformation over the stored
+  **full rendered page image**, not a separately-uploaded cropped asset. This is what
+  makes the I3 re-crop requirement cheap: correcting a bad automatic crop changes four
+  numbers on a document, with no re-upload and no re-processing, and the full page is
+  always still there to crop again.
+- **THE TRADE-OFF, stated deliberately: anyone who strips the crop parameters from
+  the URL gets the whole rendered page.** A crop is a presentation instruction, not an
+  access control.
+- **Why it is acceptable here, and only here.** These are published past papers —
+  documents the boards themselves put in public. Nothing is disclosed that was not
+  already public, so the exposure is of a public document to someone who already has
+  a link to it.
+- [ ] **DO NOT REUSE THIS PATTERN FOR ANYTHING PRIVATE** without revisiting it.
+      Student work, uploaded ID documents, note images, anything user-authored: a
+      transform URL would leak the surrounding page. Those need a separately-uploaded
+      derived asset or a signed URL. The reasoning above depends entirely on the
+      source document already being public, and that property does not travel.
+
+### Workstream I — accepted limitations (not defects, but write them down)
+- **Written answers are not machine-marked.** Exam results auto-score MCQs only;
+  written answers are shown for self-review. The existing essay grader is tuned to
+  short revision answers, and scoring a 5-mark board answer with it would put a
+  number on the paper that the real marking scheme would not recognise. A student
+  sees `marksAwarded` over the MCQ portion, clearly labelled.
+- **"Time spent per section" is a lower bound, not a stopwatch.** It is the interval
+  between the first and last answer stamped in that section, so a student who reads a
+  section and answers nothing registers zero. The UI prefixes it with `~` for that
+  reason. Real per-question timing would need client-side focus tracking, which is
+  both more invasive and less trustworthy than the thing it would measure.
+- **The generated exam-style path is per-student runtime cost on OpenAI.** Workstream
+  I routes every model call to OpenAI, and `generateExamStyle.js` follows that — but
+  the "volume is low" argument that justifies `PYQ_MODEL` **does not transfer** to it,
+  because generating a paper is a per-session cost. It therefore uses the cheaper
+  `PYQ_GENERATION_MODEL` (`gpt-4o-mini`, the same model the app-wide chain already
+  falls back to). If this path becomes hot, revisit **it** specifically — do not move
+  the parse back onto Groq. A bad generated question wastes a student's time; a bad
+  parse is cached as ground truth.
+- **JEE and NEET get no exam mode.** They are competitive entrance exams, not board
+  exams, and their paper patterns are nothing like a board paper's.
+  `blueprintFor()` returns `null` and the UI says exam mode is unavailable — better
+  than rehearsing the wrong exam.
+- **Classes Nursery-5 get no exam mode either.** A timed, sectioned mock paper is not
+  a meaningful artefact for a six-year-old; inventing one would be template filler.
+- **Non-board-grade blueprints are DERIVED, not authoritative.** Neither CBSE nor
+  BSEH publishes a paper design for Classes 6-9 and 11 — those grades are examined
+  internally by the school. The structures in `examBlueprints.js` are scaled from the
+  published Class 10/12 designs (which schools model internal exams on), and the file
+  header says so along with its sources and search date. This is why the UI calls
+  them "exam-style practice" and never "your exam".
+- [ ] **Board patterns change. Re-check `examBlueprints.js` against current CBSE/HBSE
+      sample papers each academic year** — the header records that the current values
+      were web-searched on 31 July 2026.
+
+### Blueprint sources are now PRIMARY — and checking them found a real error
+- **What changed.** `examBlueprints.js` cited coaching/aggregator sites
+  (vidyarohi, collegedekho, selfstudys, oswal, studocu, kollegeapply). For a
+  state-government deployment that is not a defensible provenance answer, and the
+  fix costs nothing: **the sample paper IS the pattern**, so the official PDF is the
+  same download. Citations are now the boards' own:
+  - CBSE Class X: https://cbseacademic.nic.in/SQP_CLASSX_2025-26.html
+  - CBSE Class XII: https://cbseacademic.nic.in/SQP_CLASSXII_2025-26.html
+  - BSEH model papers + stepwise marking schemes:
+    https://bseh.org.in/model-paper-stepwise-marking-scheme-classwise-202526
+- **The check was not a formality — one of three was materially wrong.** The
+  aggregators described CBSE Class 10 Science as five question-type sections
+  (A 20x1, B 6x2, C 7x3, D 3x5, E 3x4). The official SQP says verbatim: *"This
+  question paper consists of 39 questions in 3 sections. Section A is Biology,
+  Section B is Chemistry and Section C is Physics."* Sectioned **by discipline**, not
+  by question type. A Class 9 mock built on the aggregator shape would not have
+  resembled the exam at all. Maths (38 q / 80 marks) and Class 12 Physics
+  (33 q / 70 marks) were checked the same way and were correct as encoded.
+- **Confidence is now recorded per figure rather than uniformly.** Verified verbatim:
+  section structure, question counts, totals, duration. Verified by two independent
+  official documents agreeing (SQP and Marking Scheme): Science Section A = 30 marks
+  as 9x1 + 3x2 + 2x3 + 1x4 + 1x5. **Still assumed:** the Chemistry/Physics split of
+  the remaining 50 marks (an even 25/25). Extracting the marks column for those two
+  sections gave *inconsistent* results between the SQP and the MS, so nothing from
+  that heuristic was encoded.
+- [ ] **Confirm the Chemistry/Physics mark split** from the official Science Marking
+      Scheme when the corpus is collected.
+- [ ] **HBSE IS STILL UNVERIFIED, and its secondary sources contradict each other.**
+      One says Class 10 Science is 60 theory + 20 practical + 20 CCE over 3 hours;
+      another says every subject is 80 theory + 20 internal over 3 hours 15 minutes.
+      The HBSE-specific 60-mark Science pattern was **removed** rather than kept —
+      encoding a contested number as settled is worse than using one shape for both
+      boards at a non-board grade. Reintroduce a divergence only once the BSEH model
+      paper confirms one. **Download the BSEH model papers at the same time as the
+      HBSE past-paper corpus** — same site, same trip.
+
+### Parse quality on a REAL board paper — first measurement, and it is not good enough to trust
+- **Measured 31 July 2026** against the official CBSE Class 10 Science SQP
+  (`Science-SQP.pdf`, 15 pages), using the real `parsePastPaper()` on `PYQ_MODEL`
+  (gpt-4o, vision, `detail: high`). This replaces the earlier synthetic-PDF smoke
+  test as the baseline.
+- **Results:** 15/15 pages parsed, no page failures, no fallback. Duration (180 min)
+  and total marks (80) read correctly. **But: 71 questions extracted from a
+  39-question paper**, and the section assignment drifted badly — 27/8/3 against a
+  true 16/13/10. ~129 seconds wall clock for 15 pages.
+- **What this means.** Over-extraction is the dominant failure mode on a real paper:
+  sub-parts `(a)/(b)`, internal-choice `OR` alternatives, and questions spanning a
+  page boundary each get counted as separate questions. Section drift follows from
+  the same cause. **This is exactly why the admin review step is mandatory and why
+  the draft is not student-visible** — but it also means reviewing a real paper is
+  substantial work, not a rubber stamp: an admin must delete roughly half the rows
+  and re-assign sections.
+- [ ] **Improve the parser before the bulk import, or budget the review time
+      honestly.** Two cheap, high-value changes to try first, in this order:
+      (1) feed the model the running question-number sequence so far and instruct it
+      that sub-parts and `OR` alternatives belong to the CURRENT question rather than
+      starting a new one; (2) pass the paper's stated question count and section
+      structure (read once from page 1) into every page's prompt as a constraint, so
+      section assignment is anchored instead of re-guessed per page.
+- [ ] **Re-measure against the same paper after any parser change.** `Science-SQP.pdf`
+      is a good regression fixture precisely because it is hard: 3 discipline
+      sections, internal choice throughout, and figures interleaved with text.
+- **Do not read the earlier synthetic-PDF result as a quality signal.** A clean
+  single-page digitally-generated PDF exercised the plumbing, not the parsing.
+
+### Parse baseline v2 — after the structural fixes. THE REVIEW STEP IS A COST MODEL.
+- **Same fixture, same model, measured 31 July 2026.** Official CBSE Class 10 Science
+  SQP (15 pages), real `parsePastPaper()` on `PYQ_MODEL` (gpt-4o vision).
+
+  | | v1 (isolated pages) | v2 (anchored + folded) | truth |
+  | :--- | ---: | ---: | ---: |
+  | questions | 71 | **41** | 39 |
+  | Section A (Biology) | 27 | **16** | 16 |
+  | Section B (Chemistry) | 8 | **15** | 13 |
+  | Section C (Physics) | 3 | **10** | 10 |
+  | marks A / B / C | — | **30 / 25 / 25** | 30 / 25 / 25 |
+  | total marks | 80 | 80 | 80 |
+  | duration | 180 | 180 | 180 |
+  | pages failed | 0 | 0 | — |
+  | wall clock | 129 s | 144 s | — |
+
+- **What fixed it.** Three changes, all structural rather than prompt-polish:
+  1. **Anchoring.** The paper's own General Instructions are read once from page 1 and
+     carried into every later page as a constraint, along with the last question
+     number and the section in progress. Previously each page was parsed in
+     isolation, so a page in the middle of Chemistry had no local evidence it was
+     Chemistry — the heading was ten pages back. This is quoting the paper at itself,
+     not feeding the model its own earlier guesses.
+  2. **Folding.** Continuations, repeated numbers and `OR` alternatives are folded
+     after parsing, in code. The prompt also instructs it, but a prompt is a request
+     and the fold is a guarantee.
+  3. **`OR` modelled, not excluded.** See the schema note below.
+- **A self-check now ships with every parse.** The paper states its own question
+  count; the parse compares against it and returns a `discrepancy`. "This paper says
+  39 questions, we extracted 41" is immediately actionable in a way that 41 unlabelled
+  rows is not. It is a warning, never a rejection — a disagreeing paper is the one
+  that most needs review, not the one to discard.
+- **Two incidental fixes, both measured rather than guessed:** `PARSE_MAX_TOKENS`
+  8000 -> 12000 after a real truncation on page 11 (`Unterminated string in JSON at
+  position 16256`); and `choiceKeyOf()` fell back to `String(q._id)`, which is
+  `"undefined"` for un-persisted parser output, so every non-choice question keyed to
+  one bucket and a 39-question paper counted as **5**. A distinctness helper that
+  silently makes everything identical is worse than no helper — it now falls back to
+  object identity.
+
+- [ ] **TIME A REAL CORRECTION BEFORE COMMITTING TO A CORPUS SIZE. This is the
+      number that decides the feature's scope.** The parse is now reviewable rather
+      than a from-scratch rebuild — Sections A and C are exact, marks are exact, and
+      the residual is +2 questions in one section — but "reviewable" is still not
+      free. Sit an admin down with `Science-SQP.pdf`, have them correct the draft to
+      publishable, and record the wall-clock minutes here:
+
+      Measured correction time for one paper: ______ minutes
+
+      At 15 min/paper an 80-paper corpus is ~20 hours — a week of afternoons, fine.
+      At 90 min/paper it is ~120 hours, and the honest plan is **15 papers covering
+      the highest-traffic subject/year combinations**, not 80. Do not choose the
+      corpus size before this number exists.
+- [ ] **Re-measure against `Science-SQP.pdf` after ANY parser or model change.** It
+      is the regression fixture precisely because it is hard: 3 discipline sections,
+      internal choice throughout, figures interleaved with text, and a known correct
+      answer. A real paper with a known answer is worth more than any synthetic test
+      here.
+- **Residual, known:** +2 questions in Section B (Chemistry). Not chased further
+  because the remaining error is now within what review comfortably absorbs, and the
+  next measurement that matters is the human one above, not another parser round.
+
+### Internal choice ("Q31 ... OR ...") is now modelled, not papered over
+- **It was not representable at all.** `PyqQuestion` had no notion of an either/or
+  pair — and worse, the schema comment offered `"31 OR"` as an example
+  `questionNumber`, which is the phenomenon being *noticed* and then encoded as a
+  string suffix. That representation cannot answer any question the app actually
+  asks (how many questions is this paper, how many marks are available, which
+  alternative did the student attempt) and it silently inflated the question count,
+  which was one cause of the 71-from-39 over-extraction.
+- **How it works now.** Each alternative is its own document — it has its own text,
+  options, figure and Hindi translation — tied by a shared `choiceGroup`, with
+  `choiceIndex` 0 for the alternative printed first. Counting questions means
+  counting distinct choice groups; a group contributes its marks **once**.
+  `countChoiceGroups()` / `availableMarks()` / `groupByChoice()` centralise that so
+  no call site re-derives it.
+- **Scoring rule, stated deliberately:** if a student somehow answered both
+  alternatives, the **first in paper order** is marked. That is what an examiner does
+  with a script that answers both, and marking the higher-scoring one would reward
+  ignoring the rubric. The exam UI locks the other alternative once one is answered,
+  so this is a server-side backstop for a hand-crafted request rather than a normal
+  path — but the two must agree, and they do.
+- [ ] **Verify against a paper with heavy internal choice at import time.** The
+      Science fixture has 7 choice groups; a Maths paper typically has more.
+
+### THE FIXTURE IS IMPORTED AND WAITING. The human number is the next action.
+- **A real draft now exists in the database**, imported through the real pipeline
+  (same parse, same uploads, same `toPyqDocument` mapping the HTTP route uses):
+
+      CBSE / Class 10 / Science / year 2026
+      "Science (SQP 2025-26) — REVIEW TIMING FIXTURE"
+      parsed with: gpt-4o (vision)   status: draft (NOT student-visible)
+
+  Year 2026 and the shouty title are deliberate — it must be impossible to mistake
+  this for real corpus content. **Delete it when the measurement is done:**
+
+      node src/scripts/import-paper.js --delete --board CBSE --grade "Class 10" \
+        --subject Science --year 2026 --title "Science (SQP 2025-26) — REVIEW TIMING FIXTURE"
+
+- **Its content is now baselined, so "the fixture is unchanged" is a check rather
+  than an assumption.** Recorded 31 July 2026, after eleven other papers had been
+  imported around it:
+
+      content hash : 6729fe7556bf9be1c00bdf279be87dd5e32447cb15154bc23d9a0759310329fc
+      rows         : 47      status: draft      __v at record: 3
+
+      node src/scripts/pyq-baseline.js --verify     # exit 1 on drift
+
+  The hash covers parsed content only — question text, marks, numbering, structure,
+  section names — and deliberately excludes `_id`, timestamps and `__v`. Excluding
+  `__v` is the point: a save that changes nothing must not read as tampering, and an
+  edit that changes content must not be able to hide behind an unchanged counter.
+  `--record` refuses to overwrite an existing baseline without `--force`, because a
+  baseline you can silently rewrite is not one.
+
+  **Why this was needed:** before it, the claim rested entirely on nobody having run
+  an import against the fixture — an argument about intent, not evidence. `PastPaper`
+  has no `timestamps: true`, so there is no `updatedAt` and no audit trail; the only
+  historical signal is `__v`, and see the note below on how little it can tell you.
+
+#### What the fixture's three `__v` saves were
+
+The fixture sits at `__v: 3`. Mongoose's version counter is not a save counter — it
+increments only on writes that could shift array indexes — so the first step was to
+measure the rules rather than recall them. Against the real `PastPaper` model, on a
+throwaway row (deleted after):
+
+      create                                          -> __v 0
+      save() changing a scalar only                   -> +0
+      save() assigning sections[]                     -> +1
+      save() assigning publishedWithWarnings[]        -> +1   (the publish route)
+      findByIdAndUpdate, no array in the update       -> +0   (the unpublish route)
+      save() assigning pageTrust[]                    -> +1   (a re-parse)
+
+Two stored facts then pin the history, because every array field on `PastPaper`
+defaults to `[]` and is therefore written by any full `save()` once it exists in the
+schema. The fixture **has** `publishedWithWarnings` and **does not have** `pageTrust`.
+So its last write happened after `publishedWithWarnings` was added (the warn-don't-block
+work) and before `pageTrust` was added (the per-page text-trust work) — which brackets
+it to before the parser evaluation began. Reconstruction:
+
+  1. **Import completion** — `paper.sections = parsed.sections; save()`. Certain: the
+     paper is `uploadedBy: 'cli'`, and this is the only array write on the CLI path.
+  2. **Publish** — assigns `publishedWithWarnings[]`. High confidence: the field is
+     present on the doc, and the fixture was published (then unpublished on request).
+  3. **A second publish** — the warn-don't-block flow returns warnings first and needs
+     a confirming re-POST, which re-assigns the same array. Plausible, not proven.
+
+  The **unpublish contributed nothing** (measured +0), which is why the counter sits at
+  3 rather than 4 despite the paper having round-tripped through published.
+
+Three things are established beyond inference, and they are the ones that matter:
+`_id` still equals `createdAt` (19:41:51), and `--replace` deletes and recreates with a
+fresh `_id`, so **the paper has never been re-imported**; `pageTrust` is absent, so **no
+re-parse has ever touched it**; and all 47 questions are at `__v: 0` with identical
+`_id` timestamps, so **not one question has ever been edited** — which also confirms the
+human correction-time measurement is still outstanding, not merely unrecorded.
+
+Save 3 is a reconstruction, not a record, and it cannot be made into one retrospectively.
+That is the argument for the baseline above: from here the question "has it changed?" is
+answered by a hash, and `__v` goes back to being what it is — a concurrency token that
+makes a poor audit log.
+
+- **Its correction worklist, as printed by the import:**
+
+      40 questions vs 39 expected     -> delete ~1 spurious row
+      Section A  16 questions, 30 marks   (matches truth)
+      Section B  15 questions, 25 marks   (truth 13 — 2 spurious)
+      Section C   9 questions, 21 marks   (truth 10 / 25 — page 11 failed, see below)
+      11 figures need admin-written alt text   BLOCKS PUBLISH
+       1 question references a figure not extracted (Q27)  BLOCKS PUBLISH
+      11 crops to eyeball
+       7 questions carry no marks value
+       4 internal-choice (OR) groups to verify
+      ~20 discrete edits over 44 rows
+
+- [ ] **CORRECT THIS PAPER AND TIME IT. Nothing downstream should be decided first.**
+
+      Measured correction time for one paper: ______ minutes
+
+      Then choose scope from the number, not from ambition:
+      - **~15 min/paper** -> 80 papers is ~20 hours, a fortnight of evenings. Do it.
+      - **~90 min/paper** -> 80 papers is ~120 hours. The honest plan is a focused
+        **15**: Class 10 Science, Maths and Social Science, last three years, both
+        boards. That is a genuinely useful product and much better than 80
+        half-corrected papers.
+
+      A bulk import is now one command per paper (`src/scripts/import-paper.js`), so
+      the machine half of the cost is not the constraint — the human half is, and it
+      is the only half that has never been measured.
+
+### Known parse defect: page 11 fails on this fixture, and it is NOT the count drift
+- **Symptom.** Page 11 of the Science SQP returns `PARSE_MODEL_RETURNED_INVALID_JSON`
+  on every run, at both `maxTokens` 8000 and 12000. It costs a page of Section C:
+  9 questions / 21 marks against a true 10 / 25.
+- **NOT chased, deliberately.** It is queued behind the human timing measurement,
+  which is the number that decides whether more parser work is worth doing at all.
+  Recording it so it is not rediscovered as a mystery.
+- [ ] **Likeliest cheap fix, to try when parser work resumes:** retry ONCE on a JSON
+      parse failure. The retry logic added to `callOpenAIChat` covers transient HTTP
+      failures but deliberately not malformed JSON, because a 400 should never be
+      retried — a JSON failure is a different case and probably is recoverable. Try
+      that before anything structural.
+- **Note for the timing measurement:** a failed page is realistic correction work —
+  real imports will have them — so time the fixture AS IS rather than waiting for
+  this fix.
+
+### `callOpenAIChat` now retries transient failures — found by an import degrading silently
+- **What happened.** An import fell all the way to the text-only fallback while
+  `PYQ_MODEL` was perfectly healthy. Diagnosed afterwards: ~60 high-detail vision
+  calls in quick succession tripped a rate limit, `callOpenAIChat` returned `null`
+  (it cannot distinguish a transient 429 from a hard failure at its boundary), and
+  the parse degraded. **A whole paper was parsed on the weak path because of a
+  momentary limit** — and would then have been cached as ground truth and reviewed by
+  an admin trusting it.
+- **A bulk corpus import makes this a certainty, not a risk.** 80 papers is thousands
+  of vision calls; rate limits WILL be hit.
+- **Fix.** `callOpenAIChat` takes an optional `retries` (default **0**, so every
+  existing caller is byte-for-byte unchanged) with exponential backoff, honouring
+  `Retry-After`. Retried only on genuinely transient statuses
+  (408/409/429/500/502/503/504). **400 is never retried** — retrying a request the API
+  rejected on its merits just triples the latency before the same failure. The PYQ
+  parse opts in with `retries: 3`, because falling back there costs a whole paper
+  rather than one worse figure.
+- **`maxTokens` ceiling recorded:** gpt-4o accepts at most **16384** completion
+  tokens and returns a hard 400 above it (verified directly). Since 400 is not
+  retried and returns null, exceeding it would silently degrade every paper to the
+  text-only path and would LOOK like a rate-limit problem while being a
+  configuration one.
+- **Mislabelling fixed.** `parsedWithModel` used to report `"groq-fallback
+  (text-only)"`. `callGroqChat` has its own internal chain ending at OpenAI
+  gpt-4o-mini, so a fallback parse may never have touched Groq — the label named the
+  wrong provider to precisely the reader who depends on it (the admin deciding
+  whether to re-import). It now reports `"fallback: text-only (no vision)"`, which is
+  what actually matters and is true either way.
+
+### Import mapping is now guarded by CI — it had already silently dropped a field
+- `choiceGroup` / `choiceIndex` were added to the schema and the parser, and the
+  import mapping (an explicit field list, inline in the route handler) did not carry
+  them. **Nothing failed.** The import would have succeeded and stored every "OR"
+  alternative as an independent question — exactly the over-counting the choice
+  modelling exists to prevent. A right parse and a wrong database.
+- This is the same failure as `canonicalizeSubtopics` (CI invariant 8), in a second
+  place. The mapping is now an exported `toPyqDocument()` driven by CI invariant 14
+  with a fully-populated parsed question, so any field added to `PyqQuestion` and not
+  carried fails the build **by name**. Do not inline it back into the handler.
+- One field is exempt, listed explicitly with its reason:
+  `hindiRegisterVersion` must stay absent on a fresh import, because absence means
+  "pre-versioning" and initialising it would assert a translation that never
+  happened. An unexplained exemption list is how a real omission hides in a passing
+  test, so the reason is in the invariant.
+
+### Two small environment traps recorded so they are not rediscovered
+- **`import 'dotenv/config'` must be the FIRST import in any script touching
+  Cloudinary.** `utils/cloudinary.js` reads env at MODULE LOAD, and ESM evaluates all
+  imports before the body runs — so a `dotenv.config()` call further down leaves it
+  initialised as unconfigured and the script dies with "Cloudinary is not configured"
+  on a machine where it plainly is. `server.js` already documents this; the other
+  backfill scripts get away with body-level config() only because they read
+  `MONGODB_URI` at call time. `src/scripts/import-paper.js` follows the server.
+- **Do not run the test server on port 5060 or 5061.** They are SIP/SIPS and sit on
+  the WHATWG Fetch **blocked-ports list**, so Node's `fetch()` refuses them with an
+  opaque `bad port` while `curl` connects happily — which reads as a broken test
+  suite rather than a bad port choice. `TEST_PORT=5070` is fine.
+
+### The admin console reported "no papers imported yet" for a paper that HAD imported
+- **Root cause: the running server predated the feature.** The process serving port
+  5000 was started before Workstream I existed and 404s both `/api/pyq-admin/*` and
+  `/api/pyq/*`. Nothing was wrong with the database, the query or the environment —
+  the document was present with `parseStatus: 'draft'`, the admin list query has **no
+  filter at all** (`PastPaper.find()`), and the import script and server share one
+  `MONGODB_URI` and one `eklavya` database. All three were checked by dumping rather
+  than asserting. **Fix: restart the server.**
+- [ ] **Restart any long-running dev server after pulling this workstream.** Obvious
+      in hindsight, invisible at the time, and it cost a full misdiagnosis cycle.
+
+### A FAILED REQUEST IS NOT AN EMPTY LIST (fixed)
+- **What made the above hard to see.** `PyqAdminPanel` did
+  `const d = await res.json(); setPapers(d.papers || [])` with no status check, and
+  rendered "No papers imported yet." whenever the list was empty. A 404 therefore
+  rendered as a confident, false statement **about content**.
+- **Why that is worse than an unhandled error.** The two states demand opposite
+  responses: "no papers imported" says re-import, "cannot reach the server" says fix
+  the server. Conflating them sends someone to debug a pipeline that is working.
+- **Fixed:** the status is checked, a 404 is named specifically ("the running server
+  may predate this feature — restart it"), and the "none imported" row now renders
+  only when the request actually SUCCEEDED and came back empty. Same principle as the
+  student-side empty-corpus rule: absence of data and failure to load are different
+  states and must never render identically.
+
+### The 56/56 suite could not see the review screen being unreachable — Rule 11 again
+- **The blind spot, precisely.** Every existing check verified that the import WROTE
+  correctly — by reading the database. Not one verified that the admin could then
+  FIND what was written, by calling the route the review UI actually calls. The
+  harness observed the system from outside its real mechanism, so it passed at 56/56
+  while the feature was unusable end to end. That is Design Rule 11 in a new place.
+- **Now asserted, and proven sensitive.** `test:pyq` drives `GET /pyq-admin/papers`
+  and `GET /pyq-admin/papers/:id` with a minted admin token (signed with the app's own
+  JWT_SECRET in the exact shape `routes/admin.js` issues, so the real middleware and
+  the real route run — admin login is env-configured and impossible in a test
+  environment). It asserts a draft appears in the list, carries `parseStatus:'draft'`
+  so the UI can mark it, reports its question count, and that the review screen opens
+  and returns its questions.
+- **The test was verified to FAIL against the broken condition** — pointed at the
+  stale server it returns 404 and the assertion fails; against the current build it
+  returns 200 and passes. A check that has never been observed failing is not yet
+  known to be a check (Design Rule 9's "a test double must be able to represent the
+  failure").
+- **The counterpart is asserted SEPARATELY, not inferred.** Students must not see
+  drafts — but the admin list has no filter at all, so student invisibility is a
+  property of a *different query in a different router*. Deriving one from the other
+  would assume the thing worth checking. Four independent assertions: a draft is
+  absent from `availability`, contributes no year to the selector, cannot be
+  practised (404 `NO_PAPERS_AVAILABLE`), and cannot be started as an exam — plus a
+  fifth showing that flipping the SAME paper to `published` makes it appear, which
+  proves both views are driven by status rather than coincidentally both empty.
+
+### Figures now come from the PDF's embedded image objects — no crop, no crop editor
+- **The hypothesis was right.** Figures in these papers are embedded IMAGE OBJECTS
+  placed by the authoring tool, not ink on a rendered page. Measured on the CBSE
+  Class 10 Science SQP: **13 embedded images across 15 pages**, every sampled one a
+  genuine question figure (digestive system, atomic shells, ray optics, circuits,
+  a camera/lens diagram).
+- **Better than any crop, on every axis:**
+  - **Exact bounds**, from the PDF's own structure — no model-guessed pixel box, so
+    nothing to re-crop and no crop editor to build or maintain.
+  - **Original resolution** — up to 814x350 and 794x641, against ~230x240 for the
+    same figure cropped from a 150 DPI page render. The screen-density question
+    stops existing.
+  - **No crop-URL exposure.** The figure is its own asset. The trade-off recorded
+    earlier in this file is designed out, not accepted.
+- **The model's job shrank to the part it is good at.** It no longer guesses a
+  bounding box; it is handed the page's already-extracted figures (numbered, with
+  their position down the page) and only decides WHICH QUESTION each belongs to.
+  Reading-order judgement instead of pixel geometry.
+- **Unassigned figures are surfaced, not dropped.** A figure no question claimed is
+  either decorative or a question's figure that was missed, and only review can tell.
+  The import reports them by number.
+
+#### THE TRAP: mupdf's `toPixmap()` does not apply a PDF soft mask
+- An image whose transparency lives in a separate `/SMask` decodes to its raw RGB —
+  which for these figures is a **black background**, because the artwork is drawn
+  white-on-transparent. Rendering that gives a black rectangle with barely-visible
+  strokes. `getMask()` returns the mask as its own image and it must be composited by
+  hand.
+- **A version that ignores masks looks like it works**: on page 11 of the fixture,
+  one figure has a mask and the other does not.
+- A `DrawDevice` was tried first and was worse — black background AND a vertical flip,
+  because `fillImage`'s matrix maps the unit square with an inverted y-axis and it
+  does not apply the SMask either. Manual pixel compositing is explicit and has no
+  orientation to get wrong.
+
+#### THE WORSE TRAP: `getPixels()` returns a VIEW into the WASM heap
+- Allocating anything in mupdf afterwards can GROW that heap, which **detaches every
+  existing view**. Reads then silently return zeros, which composite to a solid black
+  rectangle — indistinguishable from a content problem.
+- **It bit twice, in the same function.** First on the source pixels (fixed by copying
+  them out with `Uint8Array.from` before allocating the destination). Then again on
+  the way out: the uniform-colour sanity check ran AFTER `asPNG()`, which allocates —
+  so it read a detached array, saw all zeros, and declared every figure blank. Two
+  figures vanished from an otherwise correct run.
+- **Whether it triggers depends on image size and prior allocations**, so it is
+  intermittent: two figures with identical structure (RGBA + soft mask) behaved
+  differently in the same run — page 11's came out perfect, page 13's came out solid
+  black. **A run that works proves nothing.**
+- **Rule for `pdfExtract.js`: treat any mupdf call as capable of invalidating every
+  view obtained before it.** Copy pixels out immediately; never hold a view across an
+  allocation.
+- A figure that composites to a single flat colour is now returned as `null` rather
+  than shipped, so the I3 rule holds the question back from publication instead of
+  publishing a blank rectangle.
+
+#### Correction is paste, not crop
+- `POST /pyq-admin/questions/:id/figure` accepts a pasted screenshot, a drop, or a
+  file pick. Same validated path as My Notes: memory storage, 5MB cap, magic-byte
+  sniff (extension and Content-Type are both spoofable), re-encode strips metadata.
+  The client reuses My Notes' `imageFilesFrom()` for clipboard/drop extraction — no
+  second upload path.
+- The auto-attached figure stays the DEFAULT, so a correct one needs no action;
+  pasting only replaces the wrong ones. Roughly 10 per paper, seconds each.
+- The review row also shows the **source page**, so an admin can confirm the
+  assignment and snip from it when the PDF drew a figure with vector operators rather
+  than embedding it.
+
+#### Parse baseline v3 (same fixture, after the switch)
+| | v1 | v2 | v3 | truth |
+| :--- | ---: | ---: | ---: | ---: |
+| questions | 71 | 41 | 41 | 39 |
+| Section A | 27 | 16 | **16** | 16 |
+| Section B | 8 | 15 | 15 | 13 |
+| Section C | 3 | 9 | **10** | 10 |
+| marks A/B/C | — | 30/25/21 | **30/25/25** | 30/25/25 |
+| figures attached | 11 crops | 11 crops | **10 exact assets** | — |
+- Section C recovered fully (page 11 no longer fails), and all three section mark
+  totals now match the paper exactly. The residual is unchanged: +2 questions in
+  Section B. Still not chased — the human timing measurement is still the next action.
+
+### Also fixed while here: `pkill` does not exist in this shell
+- Every `pkill -f "src/server.js"` issued during development reported success and did
+  **nothing** — the command is absent from the Git Bash environment and the failure was
+  swallowed by `2>/dev/null`. Seven test servers accumulated across the session, one
+  per port, all still holding their ports and their Mongo connections.
+- **Use PowerShell to stop processes on Windows**: find the owner with
+  `Get-NetTCPConnection -LocalPort <p> -State Listen` and `Stop-Process -Id`. Verify
+  the port is actually free afterwards rather than trusting the kill command.
+
+### The count discrepancy is a RECONCILIATION, not a deletion — worklist advice corrected
+- The import worklist used to print "delete ~N spurious row(s)" on a count mismatch.
+  **That advice was wrong on the first real paper and would have destroyed content.**
+- What the +2 on the CBSE Science fixture actually is, checked row by row:
+  - The tail of the CHEMISTRY section was numbered 30-31 by the parse, colliding with
+    the PHYSICS section's genuine Q30 and Q31. Four rows, all real questions, filed
+    under the wrong section — not extras.
+  - One of those pairs is additionally a MIS-GROUPING: a sub-part
+    "(e) Write a balanced chemical equation..." and a separate question
+    "B. The electronic structures of atoms P and Q..." were folded together as OR
+    alternatives. They are not alternatives of each other.
+  - The other pair ("A. A hydrocarbon..." / "B. Oxygen can combine...") IS a
+    genuine internal choice and must stay paired.
+- **So the real residual is a numbering/section-boundary problem, not surplus
+  questions.** Every row is real content. Deleting to make the count match would have
+  removed two genuine questions and looked like success.
+- Worklist now prints a reconciliation order instead: repeated numbers across a
+  section boundary, then sub-parts mis-folded as OR alternatives, then genuine
+  duplicates last.
+- [ ] **Parser follow-up, queued behind the timing measurement:** the fold keys on
+      "section|number", so a number reused in a different section survives as two
+      rows — correct — but a number reused because the parse put a question in the
+      WRONG section produces exactly this collision. Feeding the section's true
+      question-number RANGE into the prompt (available from the paper's own
+      instructions) would likely close it.
+
+### Missing figures and missing alt text now WARN at publish — they no longer block
+- **Changed at the operator request**, from the hard gate the I3 rule originally
+  specified. Recorded rather than quietly swapped, because the reasoning that
+  produced the gate has not stopped being true:
+  - A question whose text says *in the figure below* with no figure is
+    **unanswerable**, and unlike a generated question it cannot be repaired by
+    dropping the reference — the reference is what the real paper said.
+  - A figure with no alt text is skipped by read-aloud, so a student relying on
+    narration loses that question entirely.
+- **What justifies it:** a hard gate on a 40-question paper stops the entire import
+  over one row, and a corpus nobody can publish is worth less than a corpus with a
+  few known-imperfect questions in it.
+- **What protects against it:** publishing past these is EXPLICIT and RECORDED.
+  The first publish attempt returns the warnings and refuses (HTTP 409,
+  requiresConfirmation) so the console can show them with the exact question
+  numbers; only a confirmed retry publishes. The paper is then stamped with
+  publishedWithWarnings, surfaced as a *known issues* badge in the paper list and a
+  banner on the review screen. Nothing is silent and nothing is unattributable.
+- **Still HARD blocks:** PAPER_STILL_PARSING and PAPER_HAS_NO_QUESTIONS. Those are
+  not quality judgements — there is simply nothing to publish.
+- [ ] **Sweep publishedWithWarnings before any real launch.** Query:
+      db.pastpapers.find({ "publishedWithWarnings.0": { : true } }).
+      Every entry is a question a student can already reach and may not be able to
+      answer. This is the list that stops known-imperfect content becoming invisible
+      debt, and it is only useful if somebody actually reads it.
+- **Wording matters and was fixed too:** the import worklist said *BLOCKS PUBLISH*
+  for both. An admin who reads that and then publishes successfully learns to
+  distrust the worklist, so it now says *warns at publish*. A checklist that
+  overstates its own severity is one people stop reading.
+
+### Exam focus mode + fullscreen + the pause decision (Workstream I addendum)
+
+#### Focus mode — automatic, and it had a real hazard in it
+- Starting an attempt hides the dashboard rail (and its mobile bottom-nav form), the
+  dashboard header, the site header, the marketing footer, and the floating Eklavya
+  Assistant. Restored when the exam component unmounts, so submit / exit / teardown
+  all go through ONE path rather than each remembering to undo it.
+- **The assistant is hidden deliberately.** A student should not have an AI tutor a
+  tap away mid-exam; leaving it there makes exam mode meaningless.
+- Driven by a class on `<body>`, not by props, because the chat widget is mounted
+  globally in `App.jsx` **outside the dashboard tree** — there is no prop path from
+  the exam to it, and threading one through would couple the exam to the app shell
+  for a purely presentational concern.
+- **THE HAZARD, which was real:** the app stops narration on a PATHNAME change
+  (`App.jsx`) and on a dashboard SECTION change (`RoadmapDashboard`). Entering an
+  exam is **neither** — the student is already on `/dashboard` with the PYQ section
+  open, and starting an attempt only changes what that section renders. A speaker
+  button left playing in PYQ practice would have carried straight into the exam.
+  `PyqExam` now calls `stopNarration()` on mount, because entering the attempt IS
+  the transition. Safe unconditionally here, unlike the pathname case, since exam
+  mode has no auto-narration of its own to kill.
+
+#### Fullscreen — opt-in, and every constraint is load-bearing
+- **A button, never automatic.** `requestFullscreen()` requires a user gesture and is
+  rejected without one, so an automatic call on exam start would fail silently on
+  every browser and leave a control that looks broken.
+- **Support is detected, not assumed.** iOS Safari on iPhone has no Fullscreen API
+  (iPad does), so the button is HIDDEN there rather than shown and inert. Focus mode
+  already delivers most of the benefit on a phone.
+- **Escape cannot be intercepted**, so the browser's `fullscreenchange` event is the
+  only source of truth — nothing is set optimistically. Leaving fullscreen drops back
+  to focus mode with the layout intact.
+- **Fullscreen and the exam are independent.** Exiting fullscreen does not exit the
+  exam and does not touch the clock. Unmounting exits fullscreen so the browser is
+  never left stranded in it.
+- The fullscreened element carries its own background — a fullscreened element with a
+  transparent background renders against black.
+- **The timer stays visible, including with a soft keyboard open.** The bar is
+  `sticky`, not `fixed`: a fixed bar gets repositioned by the on-screen keyboard on
+  both iOS and Android and can end up off-screen or floating over the very input
+  being typed into. The mobile rule that made it `static` is deliberately not applied
+  in focus mode.
+
+#### Pause — the conflict, resolved deliberately
+- Pause DOES conflict with the earlier rule that exiting leaves the clock running
+  "because that is what a real exam does". Resolved in favour of pause, on the
+  grounds that this is a **learning app**: a student who must stop for dinner should
+  not lose the paper, and refusing that mostly teaches them not to start one.
+- Kept honest rather than merely permitted:
+  - Server-authoritative. `pausedAt` / `pausedMs` / `pauseCount` live on the attempt;
+    the deadline SLIDES by the paused time. Nothing is ever decremented and stored,
+    which is what kept the original timer untamperable.
+  - **Answering is refused while paused** (HTTP 409 `ATTEMPT_PAUSED`) and the
+    questions are hidden, not merely disabled. Otherwise "pause" is the timer
+    switched off while the work continues — a timed-looking result that was not
+    timed, and the person it misleads is the student.
+  - A paused attempt can never expire.
+  - Pause survives a reload: paused when you left, paused when you return.
+  - Results state it plainly under the mark: *"2h 58m of exam time · paused 3 times
+    for 41m total"*, or *"no pauses"* — which is itself the useful signal.
+- **Exit and Pause are now different actions and the copy says so.** The old string
+  ("The clock keeps running if you leave — just like a real exam") was ambiguous
+  enough that it was misread as "the exam is not paused?", and it is now wrong as
+  well, since a Pause button exists. Replaced.
+
+#### Explicitly NOT built (and should stay that way)
+- No proctoring: no tab-switch detection, no blur penalties, no forced fullscreen, no
+  copy-paste blocking, no webcam anything. This is practice, not invigilation — it is
+  a rabbit hole with no end and real privacy problems, and it would be the wrong
+  promise for a school deployment.
+
+#### Manual checks still worth doing on a real device
+- [ ] Start an exam on a 360px phone: chrome gone, timer pinned, options full width.
+- [ ] Focus a written answer with the soft keyboard open — the timer must stay on
+      screen. This is the case `sticky` was chosen for and it cannot be verified in a
+      desktop browser.
+- [ ] iPhone: confirm the Fullscreen button is ABSENT, not present and inert.
+- [ ] Escape out of fullscreen mid-exam: layout intact, clock unchanged, still in the
+      exam.
+
+### Fixture papers can no longer be published — three layers, because one was not enough
+- **It happened.** A paper titled "REVIEW TIMING FIXTURE", year 2026, half-corrected,
+  was published by accident and was reachable by seven real accounts. Publishing it
+  required no override and produced no signal — it looked exactly like publishing
+  real content. Now unpublished; 0 papers are student-visible.
+- **Guarded at three levels, deliberately, because each has a hole the others cover:**
+  1. **Schema validator** on `parseStatus` — refuses `published` when the title is
+     marked as a fixture. Runs in `validateSync()` and on `save()`, so any path that
+     goes through the model is caught.
+  2. **Publish route** — a HARD 409 `FIXTURE_PAPER_CANNOT_BE_PUBLISHED`. Unlike the
+     missing-figure and missing-alt-text warnings, `confirm: true` does NOT override
+     it. Those are quality judgements an operator may accept; this is a paper
+     labelled as a throwaway.
+  3. **CI invariant 15 + acceptance checks** — the invariant drives the real schema
+     (4 fixture titles refused, 3 real titles still allowed); the suite drives the
+     real HTTP route including the confirm-override attempt.
+- **The remaining hole, stated rather than pretended away:** `updateOne` /
+  `updateMany` skip validators by default, so a raw status update still bypasses the
+  schema layer. That is exactly how the accident happened (a script), and it is why
+  the route and the tests exist as separate layers rather than trusting the model.
+- **Markers are NARROW on purpose:** `FIXTURE`, `DO NOT USE`, `DUMMY`, `SCRATCH`.
+  **"SAMPLE" is deliberately NOT one** — CBSE's own Sample Question Papers are
+  legitimate corpus content and are titled as such, so blocking that word would
+  refuse the very papers this feature exists to serve. The invariant asserts both
+  directions so a guard that rejected everything could not pass.
+
+### Narration across in-section view swaps — the audit, and the one real gap
+- **The question:** the app stops narration on a PATHNAME change and on a dashboard
+  SECTION change. Which other transitions are neither, i.e. the student stays on
+  `/dashboard`, the section stays the same, but what is rendered changes completely?
+- **Most such swaps are covered, but by ACCIDENT rather than by those hooks.**
+  `SpeakerButton` stops playback on unmount if it owns it, so replacing a view full
+  of speaker buttons takes its audio with it. That covers PYQ practice -> exam,
+  practice quiz -> review -> setup, and similar.
+- **THE ONE GENUINELY UNCOVERED CASE — the chat widget.** It is mounted globally in
+  `App.jsx`, outside `Routes` and outside the dashboard tree, and exam focus mode
+  hides it with `display: none`, **which does not unmount it**. An assistant reply
+  being read aloud therefore keeps playing — with its stop button now invisible — for
+  the entire exam. No unmount fires, no pathname changes, no section changes.
+- **Fixed** by `stopNarration()` on `PyqExam` mount.
+- **The generalisable rule:** narration is only self-cleaning where the OWNING
+  component unmounts. Any transition that hides a narration source without
+  unmounting it (CSS, `visibility`, a portal left mounted) strands its audio. Hiding
+  is not stopping.
+- [ ] **Applies to any future full-screen or focus-style view.** If a new one hides
+      the chat widget or any other globally-mounted narration source, it must stop
+      narration explicitly — the two existing hooks will not do it.
+
+### PARSER EVALUATION — 9 official CBSE papers + a 2-paper HBSE sample
+- **Purpose was evaluation, not corpus building.** Every paper imported as a DRAFT
+  titled "... PARSER EVAL DO NOT USE", which makes it structurally unpublishable via
+  the fixture guard. Nothing published. The Science-SQP timing fixture was not touched.
+- **Sources: official only**, per Design Rule 17 — cbseacademic.nic.in and bseh.org.in.
+  Marking schemes downloaded alongside every SQP.
+
+#### CBSE per-paper results (question counts are CHOICE GROUPS, not rows)
+| Paper | q stated/parsed | marks stated/parsed | figures | fig refs missing |
+| :--- | :--- | :--- | ---: | ---: |
+| Cl12 Biology | 33 / **33** (+0) | 70 / **70** | 5 | 2 |
+| Cl10 Maths (Std) | 38 / **38** (+0) | 80 / 78 | 4 | 0 |
+| Cl12 Chemistry | 33 / 34 (+1) | 70 / 74 | 6 | 1 |
+| Cl10 Social Science | 38 / 40 (+2) | 80 / 83 | 2 | 1 |
+| Cl12 Physics | 33 / 35 (+2) | 70 / **64** | 11 | **5** |
+| Cl12 Maths | 38 / 43 (+5) | 80 / **97** | 6 | 0 |
+| Cl12 English Core | 13 / **36** (+23) | 80 / 81 | 1 | 2 |
+| Cl10 English L&L | 11 / **39** (+28) | 80 / **110** | 0 | 0 |
+| Cl10 Hindi (B) | — | 80 / — | 0 | 0 |
+
+- **No paper degraded to the text-only fallback.** The retry logic added last session
+  held across ~105 vision calls.
+- **One page-level failure:** Cl12 English Core page 9,
+  `PARSE_MODEL_RETURNED_INVALID_JSON`. Every other page across all 9 papers parsed.
+- **MATHS WAS NOT THE HARDEST — ENGLISH WAS**, and by a wide margin. The prediction
+  that notation and geometry would dominate was wrong; Cl10 Maths came out exact on
+  question count. Language papers are the failure case.
+
+#### The three over-extraction shapes are DIFFERENT, and one fix does not cover them
+Checked before assuming, because they looked alike in the aggregate:
+- **English (+28 / +23): container-and-children.** `Q1` is a 10-mark container
+  ("Read the following passage...") followed by `QI`-`QVIII` sub-parts of 1-2 marks
+  each. Both the container AND every child are emitted as questions, and the
+  container's marks double-count its children — which is exactly how 80 becomes 110.
+- **Social Science (+2): lettered siblings.** Questions `17A`/`17B` and `27A`/`27B`
+  are map-work parts of one numbered question, both compulsory, counted as four.
+- **Physics (+2): siblings folded as a CHOICE.** `(I)`/`(II)` parts of a case study
+  were folded into `choiceGroup` as OR alternatives. This is the opposite error and
+  the most damaging of the three: it UNDER-counts marks (70 -> 64, because a group
+  contributes once) and it would tell a student "attempt any one" on a question where
+  both parts are compulsory. Wrong instruction on a real paper is worse than a
+  miscount.
+- [ ] **A parent/child model fixes English and Social Science. Physics additionally
+      needs the parser to distinguish a genuine "OR" from both-required "(I)/(II)"** —
+      it currently guesses, and guesses wrong.
+
+#### Mathematical notation survives PARTIALLY, and fails silently
+- Preserved: operators, Greek, set/limit symbols, italic math variables —
+  `𝑓(𝑥)`, `≤`, `𝜋`, `−∞`, `√3`, `∫`, `0°≤ x ≤90°`.
+- **Lost, in the same papers:**
+  - `10 − 𝑥 − 2𝑥2` for a printed `2x²` — superscript flattened, and the result is
+    genuinely AMBIGUOUS (x·2 or x²?).
+  - `cos 67𝑜` — the DEGREE SIGN became the letter "o".
+  - `∫ from 0 to 1 ... (1+x^2) dx` — integral survived, limits became prose, `²`
+    became ASCII `^2`. This one is the VISION fallback rather than the text layer.
+- Cl10 Maths kept `cos²A` and `sin⁴A` in Q20 while flattening `ax²` in Q12 — same
+  paper, same run. That is not model inconsistency: it is the text layer encoding one
+  as a real superscript character and the other as a positioned glyph.
+- [ ] **Notation loss is silent and unflagged.** An ambiguous `2x2` reaching a student
+      is a wrong question. Worth a validator before any maths paper is published.
+
+#### CBSE Hindi: the text layer is CORRUPT, and the fix is now partial
+- The PDF uses a legacy-encoded Devanagari font with no usable ToUnicode map. The
+  RENDERED PAGE IS PERFECT; the extracted text is wrong letters —
+  `णनम्नणिखिर् गद्ाांश` for a page plainly printing `निम्नलिखित गद्यांश`.
+- The prompt rule "use the TEXT for exact wording, do not fix what looks like a typo"
+  is correct for English and actively destructive here: it instructed the model to
+  propagate the corruption. **First pass: 17 questions, 0 usable.**
+- After making the rule conditional (image wins on disagreement) and adding per-page
+  trust: **13 of 25 questions clean (52%), 12 still corrupt, all 4 section names still
+  corrupt.** A real improvement, NOT a solve.
+- [ ] **Remaining Hindi work:** the model still trusts the text layer on about half
+      the pages, and `pageSections` is not covered by the transcription instruction at
+      all — which is why every section heading is still mojibake.
+- **This is the same bug as the Maths superscript loss**, not a Hindi special case:
+  printed glyphs that do not survive extraction. Fixed as one thing, deliberately.
+
+#### HBSE — the site DOES publish usable PDFs. Sampled, not exhaustive.
+- All 8 Class 10/12 model papers download cleanly from bseh.org.in with real text
+  layers. **A 2-paper SAMPLE was imported** (Cl10 Maths, Cl10 Science) rather than all
+  8 — stated explicitly, not presented as coverage.
+- **Cl12 Physics deliberately NOT imported: it is an OCR'd scan.** 319 "embedded
+  figures", all 167px-tall horizontal strips up to 3608px wide — a scanned page sliced
+  into bands. Importing it would upload 319 junk images to Cloudinary.
+- [ ] **Embedded-figure extraction needs a scan guard** before any HBSE bulk import:
+      a page yielding dozens of uniform-height full-width strips is a scan, not a page
+      with figures.
+- **Every HBSE paper is BILINGUAL** (`[Hindi and English Medium]`) — each question
+  appears twice. Expect roughly double extraction, and note the Devanagari half is
+  subject to the same corruption risk as the CBSE Hindi paper.
+- **HBSE Cl10 Maths result: 40 questions vs 38 stated (+2, comparable to CBSE), but
+  MARKS COLLAPSED** — Section A reported 20 questions worth 3 marks against a true 20,
+  whole paper ~10 marks against 80. Question structure generalises across boards;
+  marks extraction does not.
+- Resolved an open question from earlier: **HBSE Class 10 Science states 30 questions
+  over 12 pages** (CBSE's is 39).
+
+#### Marks self-consistency is now checked (and it catches what counts miss)
+- The parse compares the paper's own stated total against the sum of its sections and
+  returns `marksDiscrepancy`. Cl10 Maths is exactly why: **38/38 questions PERFECT
+  while 2 marks were missing** (Section E came out 10 against 12). A count-only check
+  called that paper clean. One number agreeing is not the paper agreeing.
+
+#### HBSE sample results (2 papers, stated as a sample not coverage)
+| Paper | q stated/parsed | marks parsed | figures | fig refs missing |
+| :--- | :--- | ---: | ---: | ---: |
+| HBSE Cl10 Science | 30 / **30** (+0) | 72 | 0 | 2 |
+| HBSE Cl10 Maths | 38 / 40 (+2) | **10** | 7 | 0 |
+- **Question structure generalises across boards.** HBSE Science matched exactly;
+  HBSE Maths was +2, the same delta as CBSE Social Science.
+- **Marks extraction does NOT generalise.** HBSE Maths reported ~10 marks against a
+  true 80 (Section A: 20 questions worth 3 marks). HBSE Science reached 72, but the
+  true theory total is still unconfirmed — the paper does not state Max Marks in a
+  form the text layer yields, which is the same open question as the 60-vs-80
+  contradiction recorded earlier. Still unresolved; do not treat 72 as settled.
+- **HBSE Science draws its figures with vector operators, not embedded images.**
+  0 figures extracted while 2 questions reference one. This is the predicted case
+  where embedded extraction finds nothing and the figure must be pasted by hand —
+  confirmed in the pre-scan (0 embedded images) before the import was even run.
+- Per-page trust is now persisted: the Science import stored 12 page verdicts. The
+  Maths import predates that change and stored none, which is itself the evidence
+  that the persistence works.
+
+---
+
+## PYQ parser: mark-shortfall diagnosis, and the standing rules for a parser re-run
+
+### A count error and a marks error are DIFFERENT DEFECTS. Diagnose them separately.
+
+Two papers came back "+1 question, −3 marks" and it is tempting to read that as one
+fault. It is not, and on both papers the over-count and the shortfall were **different
+rows**. Attributing a post-fix change to the sub-part model without splitting them first
+would have credited the fix with something it did not do.
+
+Diagnosed 1 August 2026 against the stored pre-fix rows, before any re-parse:
+
+**Cl12 Physics — 34 units / 67 marks vs 33 / 70.** Sections A (16), B (10), C (21) and
+E (15) are all exactly right. The entire defect is Section D, parsed at 3 units / 5 marks
+where the paper has 2 case studies worth 4 each:
+  - **Q29 carries 1 mark and should carry 4.** Its sub-parts were never emitted, so only
+    the stem's mark survived. This is the whole −3.
+  - **One orphaned sub-part** — `"(I) Ge and Si diodes start conducting at 0.3 V…"` — was
+    emitted as its own unit with **0 marks** and no `parentKey`. This is the whole +1.
+  - The two are unrelated to each other. The +1 row contributes no marks; the −3 row is
+    correctly counted as one unit.
+
+**Cl10 SocSci — 39 units / 77 marks vs 38 / 80.** The two errors here point in
+**opposite directions**, which is the clearest evidence available that the OR-scope rule
+was the right thing to fix:
+  - **Q17A / Q17B is a genuine printed choice that was NOT folded** (5 marks and 0 marks,
+    no `choiceGroup`). That is the +1 unit. Folding it changes marks by zero, since
+    `max(5, 0) = 5` — so it cannot be the shortfall.
+  - **Q19, the map question, was folded AS a choice and is not one.** Its two rows are
+    both-required parts (`"(p) The dam in the Sutlej-Beas river basin…"` and
+    `"…Mahanadi basin… II. Any two of the following…"`), so `availableMarks` took
+    `max(1,1) = 1` where the parts should sum to 3. **−2.**
+  - **Q8's case study parts read 1, 1, 1 against a container printed 4.** One sub-part
+    is undermarked. **−1.** Compare Q18 in the same paper, which prints "(1+2+1=4)" and
+    parsed 1+2+1 correctly.
+  - −2 and −1 account for the −3 exactly.
+
+**Q19 is the marks-losing direction of Design Rule 19 caught in the wild** — required
+parts scored as alternatives, which in a real exam tells a student to skip work that
+counts. It is also why the asymmetric default is not a stylistic preference.
+
+The Q8 finding produced a prompt change with a stated reason rather than a nudge: when a
+paper prints its own split ("(1+2+1=4)"), the parts take those numbers in order and must
+sum to the parent; parts must not default to 1 mark each. A lost mark is invisible to the
+student until the paper fails to add up.
+
+**Also removed in the same pass: two directly contradictory lines in the parse prompt.**
+One said sub-parts must be kept inside the parent's `questionText` and "Do NOT emit one
+entry per sub-part"; the next said to emit a container plus one entry per part. The first
+predated the sub-part model and was never deleted when the model landed. Any measurement
+taken across that contradiction is measuring the model's choice between two instructions,
+not the parser. **Check the prompt for stale instructions before attributing a result to
+a code change.**
+
+### Per-paper reporting requirement for any parser re-run
+
+An aggregate pass rate hides exactly the failures that matter. Every re-run reports, per
+paper and never pooled:
+
+- [ ] **Units and marks against the paper's own stated totals**, with the delta signed.
+      Units via `countQuestionUnits`, marks via `availableMarks` — the real helpers, so
+      the report cannot agree with a bug in a copy of the logic.
+- [ ] **The `partsRelation` distribution** — how many families resolved `all-required`,
+      `choose-one`, `unclear`.
+- [ ] **Every `partsAmbiguous` row, with its `partsRelationEvidence` string.** Not a
+      count. The evidence is what makes an abstention checkable against the page, and
+      reading them is the only way to tell a real abstention from a stuck field.
+- [ ] **A zero-abstention parse is a finding, not a success.** Zero `partsAmbiguous`
+      across 56 rows is what prompted this whole rule: it means uncertainty is being
+      resolved silently somewhere. Report it as a defect and look for the cause.
+- [ ] **Where a count and a marks error both appear, say which rows caused each** before
+      claiming any structural fix moved either.
+
+### Verify the fixture baseline AFTER every run
+
+- [ ] `node src/scripts/pyq-baseline.js --verify` after any batch import, and report the
+      result alongside the numbers. Runs that use `--replace` operate on papers sharing a
+      board/grade/subject key with the fixture, and `--replace` deletes before it writes.
+      The window in which that goes wrong is small and entirely silent — the fixture is
+      the paper the human correction-time measurement depends on, and it has no
+      `updatedAt` to reconstruct from afterwards. Checking costs one command.
+
+---
+
+## Named gaps from the 1 August 2026 parser run (carried forward, not fixed)
+
+### GAP 1 — "answer any N of M" has no representation in the schema
+`partsRelation` offers `all-required` and `choose-one`. Real papers routinely print a
+third thing: **"Complete any ten of twelve of the following tasks"**, **"Answer ANY FOUR
+of the following five questions"**, **"answer ANY ONE of the two"**. Those exact strings
+came back as `partsRelationEvidence` on the Class 10 English paper, attached to
+`choose-one` — because it is the closest word available, not because it is right.
+
+Why it matters: `choose-one` makes the family worth `max()` of its members. "Any ten of
+twelve" is worth ten members' marks, not one. Both the unit count and the mark total are
+wrong, in opposite directions, and no warning fires.
+
+This is the whole of the English paper's residual — **33 units against 11 stated**. It is
+the reason English is out of the publish path and stays a parser problem.
+- [ ] Add an N-of-M relation carrying the required count (`chooseN`, `n`), or decide
+      explicitly that such papers are out of corpus scope. Do not encode it as a choice.
+
+### GAP 2 — the model never abstains, on any paper
+Across three papers and 148 stored rows, `partsRelation` came back **only** as
+`all-required` or `choose-one`. `unclear` was returned **zero** times, so
+`partsAmbiguous` was zero everywhere — which is what the zero-abstention alarm in
+`pyq-parse-report.js` exists to catch.
+
+One cause was ours and is fixed: `foldQuestions()` built families from `parentKey` only,
+while a choice pair is folded on `choiceIndex` and has no `parentKey`. Those families
+never reached the evidence check at all, so abstention was **structurally impossible on
+the commonest multi-row shape**. Fixed, with two regression checks in CI invariant 17.
+
+The remaining cause is not ours: the model appears unwilling to say `unclear` even when
+told it is free. The evidence strings show it would rather quote something loosely
+related — "Below are excerpts from their letters." was offered as evidence for a choice.
+- [ ] **A quoted evidence string is not yet checked against the question's own text.**
+      An evidence string that does not appear near the rows it justifies should force
+      `unclear`. Until then, evidence proves the model wrote something, not that it read
+      something.
+
+### GAP 3 — letter-suffixed alternatives are never linked
+`17A` / `17B` are printed with `OR` between them and are alternatives, but they carry
+**different question numbers**, so the fold — which keys on `section|number` — sees two
+unrelated questions and no family is ever formed. The prompt makes this worse by listing
+`"17A ... 17B"` under SUB-PARTS, i.e. as all-required parts, which is wrong for this
+paper and right for others.
+
+On Social Science this accounted for **six pairs, +6 units and +20 marks**, and was
+corrected by hand (`src/scripts/fix-socsci-rows.js`).
+- [ ] Decide how a family is identified when the paper does not repeat the number.
+      Stripping a trailing letter is the obvious move and is exactly the kind of
+      label-based inference the prompt already forbids — `A`/`B` are alternatives in this
+      paper and required parts in others. It needs the printed separator, not the label.
+
+### GAP 4 — Physics could not be re-imported: rate limit, and --replace had already deleted
+The Class 12 Physics re-run **failed on OpenAI 429 across every page**, with both
+fallbacks unavailable (Groq 413 — the page payload exceeds the 6000 TPM free-tier limit).
+The paper is `parseStatus: failed` with **0 questions**.
+
+The part worth recording: `--replace` deletes the existing paper *before* it parses, so a
+mid-run provider failure loses the previous parse with nothing to fall back to. Physics
+had 42 usable rows before this run and has none now. It is hard-blocked from publication
+by `PAPER_HAS_NO_QUESTIONS`, which is correct, but the data loss was avoidable.
+- [ ] **Make `--replace` parse first and swap last.** Delete the old rows only once the
+      new parse has succeeded. A destructive flag should not widen its blast radius when
+      the provider is down.
+- [ ] Re-run `scratchpad/reimport-physics.sh` when the rate limit clears. It targets the
+      NEW title; the old scripts now error on no-match by design.
+
+### GAP 5 — these are SAMPLE papers, filed as past papers (product decision, unresolved)
+Everything in the corpus is a CBSE **Sample Question Paper**, not a paper any student
+sat. They are published by the board, so Design Rule 17 is satisfied and `source: 'pyq'`
+is defensible — an SQP is a real primary-source document, not generated content.
+
+But the feature is called Previous Year Questions, and a student practising an SQP under
+that label is being told something slightly untrue. `isFixtureTitle()` deliberately
+excludes the word "SAMPLE", so titles carry the distinction; nothing else does.
+- [ ] Decide whether `PastPaper` needs a `paperKind` (`sat-paper` | `sample-paper`) and
+      whether the student-facing label should distinguish them. Titles are currently the
+      only signal, and a title is not a queryable field.

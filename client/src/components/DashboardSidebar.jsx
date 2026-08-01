@@ -1,6 +1,18 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
-import { BookOpen, Dumbbell, TrendingUp, Trophy, Settings, FileText, NotebookPen } from 'lucide-react';
+import { scrollToTop } from '../utils/scrollToTop.js';
+import { BookOpen, Dumbbell, TrendingUp, Trophy, Settings, FileText, NotebookPen, ScrollText, Menu, X } from 'lucide-react';
+
+// Which sections KEEP a slot in the bottom bar; everything else moves behind "More".
+// Nine items across a phone gives each pill ~40px, so labels wrap to three lines and
+// the row scrolls sideways — the last items are unreachable without a horizontal swipe
+// nobody discovers. Three plus the button leaves each one wide enough to read.
+//
+// Listed as a keep-list rather than a drop-list on purpose: a new section added to
+// `items` then defaults to the overflow sheet instead of silently re-crowding the bar.
+// Only applied on mobile; the desktop rail is vertical and has room for all nine.
+const PRIMARY_KEYS = ['roadmap', 'mentor', 'my-notes'];
+const MOBILE_QUERY = '(max-width: 768px)';   // same breakpoint the CSS switches at
 
 // Dashboard navigation rail with a PillNav-style hover effect (adapted from
 // React Bits' PillNav to our section-switching + our cream/green palette).
@@ -11,6 +23,10 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
   const items = [
     { key: 'roadmap', label: t.studyRoadmap, Icon: BookOpen },
     { key: 'practice', label: t.practiceMode, Icon: Dumbbell },
+    // Workstream I: Previous Year Questions. Sits next to Practice because it is a
+    // sibling activity, not a sub-mode of it — PYQ has its own model, its own
+    // routes and its own two modes (practice + exam).
+    { key: 'pyq', label: t.pyqNav, Icon: ScrollText },
     { key: 'progress', label: t.progressWeakTopics, Icon: TrendingUp },
     { key: 'review', label: t.diagnosticReview, Icon: Trophy },
     // Track 2: PDF Notes generator (inline dashboard section).
@@ -25,6 +41,36 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
   ];
   // Icon node for a pill — the chatbot avatar image when `img` is set, else a lucide icon.
   const pillIcon = ({ Icon, img }) => (img ? <img className="pill-avatar" src={img} alt="" /> : <Icon size={18} />);
+
+  // Tracked in JS rather than by CSS alone because this changes WHICH buttons exist,
+  // not just how they look — a CSS-hidden pill is still focusable and still read out
+  // by a screen reader, which would leave the overflow items reachable by keyboard
+  // but invisible, and duplicated once they also appear in the sheet.
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches
+  );
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const onChange = (e) => {
+      setIsMobile(e.matches);
+      if (!e.matches) setMoreOpen(false);   // rotating to landscape must not strand the sheet
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Ordered by PRIMARY_KEYS, not by their position in `items`, so the bar reads
+  // Roadmap · Mentor · My Notes regardless of where they sit in the full list.
+  const visible = isMobile
+    ? PRIMARY_KEYS.map((k) => items.find((i) => i.key === k)).filter(Boolean)
+    : items;
+  const overflow = isMobile ? items.filter((i) => !PRIMARY_KEYS.includes(i.key)) : [];
+  const overflowActive = overflow.some((i) => i.key === activeSection);
+
+  // Both paths go through here so the bar and the More sheet behave identically.
+  const choose = (key) => { setMoreOpen(false); onSelect(key); scrollToTop(); };
 
   const circleRefs = useRef([]);
   const tlRefs = useRef([]);
@@ -90,13 +136,13 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
   return (
     <aside className="dashboard-sidebar pill-sidebar" aria-label={t.navMenuLabel}>
       <ul className="pill-list" role="menubar">
-        {items.map((item, i) => (
+        {visible.map((item, i) => (
           <li key={item.key} role="none">
             <button
               type="button"
               role="menuitem"
               className={`pill ${activeSection === item.key ? 'is-active' : ''}`}
-              onClick={() => onSelect(item.key)}
+              onClick={() => choose(item.key)}
               onMouseEnter={() => handleEnter(i)}
               onMouseLeave={() => handleLeave(i)}
               aria-current={activeSection === item.key ? 'page' : undefined}
@@ -109,7 +155,51 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
             </button>
           </li>
         ))}
+
+        {overflow.length > 0 && (
+          <li role="none">
+            {/* Marked active when the CURRENT section lives behind it, so the bar still
+                shows where you are instead of looking like nothing is selected. */}
+            <button
+              type="button"
+              role="menuitem"
+              className={`pill pill-more ${overflowActive ? 'is-active' : ''}`}
+              onClick={() => setMoreOpen((o) => !o)}
+              aria-expanded={moreOpen}
+              aria-haspopup="menu"
+              aria-label={t.navMoreLabel || 'More'}
+            >
+              <span className="label-stack">
+                <span className="pill-label">
+                  {moreOpen ? <X size={18} /> : <Menu size={18} />} {t.navMore || 'More'}
+                </span>
+              </span>
+            </button>
+          </li>
+        )}
       </ul>
+
+      {moreOpen && overflow.length > 0 && (
+        <>
+          {/* Tapping anywhere else closes it — on a phone there is no cursor to move
+              away, so a menu with no dismiss target is a menu you are stuck in. */}
+          <div className="pill-more-backdrop" onClick={() => setMoreOpen(false)} />
+          <div className="pill-more-sheet" role="menu">
+            {overflow.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                className={`pill-more-item ${activeSection === item.key ? 'is-active' : ''}`}
+                onClick={() => choose(item.key)}
+                aria-current={activeSection === item.key ? 'page' : undefined}
+              >
+                {pillIcon(item)} <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </aside>
   );
 }

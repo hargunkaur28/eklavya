@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useScrollToResult } from '../utils/useScrollToResult.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
@@ -32,6 +33,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
   const [answers, setAnswers] = useState({});
   const [sessionId, setSessionId] = useState(null);
   const [result, setResult] = useState(null);
+  const resultRef = useScrollToResult(phase === 'result');
   const [includeWritten, setIncludeWritten] = useState(false); // Track 3: opt-in
   const [promptDismissed, setPromptDismissed] = useState(false); // Phase 3
   const [autoPlayIndex, setAutoPlayIndex] = useState(-1);
@@ -248,7 +250,7 @@ export default function PracticeMode({ roadmaps = [], defaultRoadmap }) {
   const scorePct = result && result.total > 0 ? Math.round((result.score / result.total) * 100) : 0;
   return (
     <div className="module-quiz-card">
-      <div className="quiz-result-banner passed">
+      <div ref={resultRef} className="quiz-result-banner passed">
         <div className="quiz-result-score">
           <span className="quiz-result-num">{result.score} / {result.total}</span>
           <span className="quiz-result-pct">{scorePct}%</span>

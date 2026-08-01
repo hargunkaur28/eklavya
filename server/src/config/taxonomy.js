@@ -18,6 +18,32 @@ export const GRADES = [
   'Class 11', 'Class 12'
 ];
 
+// ── Boards (Workstream H) ───────────────────────────────────────────────────
+// The board list USED to be a nine-entry array inside utils/validateProfile.js
+// (ICSE, PSEB, UP, MSBSHSE, BSEB, RBSE and an 'Other' free-text escape) with the
+// client reading it over /auth/profile-config. It moved here for the same reason
+// SUBJECTS/GRADES did: it is taxonomy, it is mirrored to the client, and it now has
+// a second consumer — the PYQ corpus (Workstream I) is keyed by board.
+//
+// It is TWO entries because the platform serves exactly two. Offering a board we
+// have no syllabus blueprint and no past papers for is a promise the product cannot
+// keep, and once PYQs exist it is a promise of specific papers that will never
+// appear. An empty PYQ corpus for a board nobody can select is a bug; an empty PYQ
+// corpus for a board a student was invited to pick is a lie.
+//
+// 'Other' is gone rather than retained-but-unserved. A free-text board is
+// unmatchable against a paper corpus by construction — no normalisation turns
+// "hbse haryana" typed by a student into a queryable key — so it could only ever
+// resolve to "no papers", which is the conflation Workstream I forbids.
+export const BOARDS = ['CBSE', 'Haryana Board (HBSE)'];
+
+// Short code for display and for PYQ paper identity ("CBSE 2023 · Q14"). Keyed by
+// the canonical board string so the long name stays the one stored on the profile.
+export const BOARD_CODES = {
+  CBSE: 'CBSE',
+  'Haryana Board (HBSE)': 'HBSE'
+};
+
 // Shared normalizers — collapse casing/whitespace so ad-hoc `.toLowerCase()`
 // concatenation and scattered comparisons resolve one consistent way. Mirrors the
 // shape of normalizeTopic (weakTopics.js) but for subject/grade.
@@ -51,6 +77,30 @@ export function isKnownGrade(g) {
   return GRADES.some((x) => normalizeGrade(x) === n);
 }
 
+export function normalizeBoard(b) {
+  return (b || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Map an any-cased board to its canonical spelling. Returns the input unchanged if
+// it is not a served board — callers that need "is this servable?" must ask
+// isKnownBoard, not compare against the return value.
+export function canonicalBoard(board) {
+  const n = normalizeBoard(board);
+  return BOARDS.find((b) => normalizeBoard(b) === n) || board;
+}
+
+export function isKnownBoard(b) {
+  const n = normalizeBoard(b);
+  return BOARDS.some((x) => normalizeBoard(x) === n);
+}
+
+// Short code ('CBSE' / 'HBSE') for a board, or '' if it is not a served board.
+// Returns '' rather than the raw input for legacy values: a PYQ label built from an
+// unserved board would read "ICSE 2023 · Q14" for a paper that does not exist.
+export function boardCode(board) {
+  return BOARD_CODES[canonicalBoard(board)] || '';
+}
+
 // ── Sub-subjects (Track: subject-splitting) ─────────────────────────────────
 // Three subjects split into selectable sub-subjects; the LAST entry of each is
 // the "spans all sub-tracks" option (English → Fusion; Science / Social Science
@@ -61,6 +111,52 @@ export const SUB_SUBJECTS = {
   Science: ['Physics', 'Chemistry', 'Biology', 'Combined'],
   'Social Science': ['Economics', 'Civics', 'Geography', 'History', 'Combined']
 };
+
+// ── What the BOARDS call these sub-subjects on a paper ──────────────────────
+//
+// Papers do not use our labels. CBSE Class 10 Social Science is sectioned
+// "A-History, B-Geography, C-Political Science, D-Economics" — three of those match
+// SUB_SUBJECTS exactly and one does not: the board says **Political Science** where
+// we say **Civics**.
+//
+// The taxonomy term is NOT renamed. "Civics" is what Indian students call the
+// subject and it is student-facing, so it stays; this maps the paper's vocabulary
+// onto ours. Aliases are matched normalised (case/space-insensitive), and the
+// PRINTED label is stored alongside the resolved term so nothing is lost — an admin
+// reviewing a paper sees the board's own words, and the app still filters on one
+// consistent key.
+//
+// Add to this rather than renaming when a future paper turns up another mismatch.
+export const SUBSUBJECT_ALIASES = {
+  'political science': 'Civics',
+  polity: 'Civics',
+  civics: 'Civics',
+  history: 'History',
+  geography: 'Geography',
+  economics: 'Economics',
+  economy: 'Economics',
+  physics: 'Physics',
+  chemistry: 'Chemistry',
+  biology: 'Biology',
+  'life science': 'Biology',
+  'life sciences': 'Biology'
+};
+
+/**
+ * Resolve a discipline name as PRINTED on a paper to the taxonomy sub-subject.
+ * Returns '' when it is not a discipline we split on — a plain "Section A" heading
+ * with no discipline in it must not be forced into a match.
+ */
+export function resolveSubSubjectAlias(printed) {
+  const n = normalizeSubSubject(printed);
+  if (!n) return '';
+  if (SUBSUBJECT_ALIASES[n]) return SUBSUBJECT_ALIASES[n];
+  // "Section A — Biology", "B-Geography": find a known discipline inside the label.
+  for (const [alias, canonical] of Object.entries(SUBSUBJECT_ALIASES)) {
+    if (new RegExp(`(^|[^a-z])${alias}([^a-z]|$)`).test(n)) return canonical;
+  }
+  return '';
+}
 
 // The "spans all sub-tracks" sub-subject for each split subject.
 export const FUSION_SUBSUBJECT = {
@@ -88,6 +184,15 @@ export function hasSubSubjects(subject) {
 // Ordered sub-subject list for a subject (empty array for flat subjects).
 export function subSubjectsFor(subject) {
   return SUB_SUBJECTS[canonicalSubject(subject)] || [];
+}
+
+// Canonical spelling of a sub-subject within its subject ('' if it is not one of
+// them). Mirrors canonicalSubject: callers compare against ONE spelling rather than
+// each doing their own case-folding, which is how "geography" and "Geography" end up
+// filtering differently in two places.
+export function canonicalSubSubject(subject, ss) {
+  const n = normalizeSubSubject(ss);
+  return subSubjectsFor(subject).find((x) => normalizeSubSubject(x) === n) || '';
 }
 
 // Is `ss` a valid sub-subject of `subject`?

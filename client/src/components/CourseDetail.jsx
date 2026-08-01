@@ -106,7 +106,11 @@ export default function CourseDetail({ course, onBack }) {
           })}
         </section>
       </section>
-      <Footer />
+      {/* Footer link/text colors are tuned for the dark-green wrapper. Rendering
+          <Footer /> bare on the cream page left it light-on-light and unreadable. */}
+      <div className="footer-wrapper">
+        <Footer />
+      </div>
     </main>
   );
 }

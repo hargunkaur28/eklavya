@@ -18,6 +18,12 @@ import { encryptAadhaar, lastFourOf, aadhaarCollectionEnabled } from '../utils/a
 import { validateCompulsory, validatePhone, validateLocation, validateAadhaar, STUDY_MEDIUMS } from '../utils/validateProfile.js';
 import { maskAadhaar } from '../utils/verhoeff.js';
 import { reverseGeocode, validCoords } from '../utils/reverseGeocode.js';
+import { isKnownBoard, canonicalBoard } from '../config/taxonomy.js';
+// Admin identity for GET /me. The admin has no User document, so its email comes
+// from the same source /api/admin/login reads (DB override, else env bootstrap)
+// rather than from process.env directly — an admin who changed their email must not
+// see the stale one after a refresh.
+import { getAdminCreds } from '../utils/adminCreds.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -105,6 +111,13 @@ function publicProfile(user, sessionRole = 'student') {
   return {
     age: p.age ?? null,
     studyMedium: p.studyMedium || '',
+    // Workstream H. ALWAYS a real boolean, never conditionally omitted — the
+    // onboardingCompleted bug (see test-auth-payload-shape.mjs) was exactly this
+    // shape of field going absent on one route, and `undefined` reads as falsy while
+    // meaning "unknown". `legacyStudyMedium` is deliberately NOT returned: it is an
+    // audit record, and shipping it to the client invites a well-meaning fallback
+    // that renders the unserved board back into the UI.
+    boardNeedsReselect: !!p.boardNeedsReselect,
     fatherName: p.fatherName || '',
     schoolName: p.schoolName || '',
     schoolCity: p.schoolCity || '',
@@ -217,10 +230,26 @@ router.get('/me', authMiddleware, async (req, res) => {
   try {
     // Phase 6: admin is env-only (no DB row + no userId in the token). Return an
     // admin identity directly so the session survives a reload without a DB lookup.
+    //
+    // THIS BRANCH USED TO THROW ON EVERY CALL. It read `sessionUser(user, req.role)`,
+    // but `user` is declared with `const` BELOW — so the reference sat in the
+    // temporal dead zone and raised "Cannot access 'user' before initialization",
+    // which the catch turned into a 500.
+    //
+    // The user-visible effect was that an admin was logged out by every page
+    // refresh: the client's session-restore calls /auth/me, and its `else` branch
+    // treats ANY non-ok response as an invalid token and clears it. A 500 and a
+    // genuinely expired token were indistinguishable to it, so a server bug
+    // presented as an auth problem. Nothing in the admin panel could work across a
+    // reload.
+    //
+    // The shape below deliberately MATCHES what POST /api/admin/login returns, so
+    // login and refresh agree on the session object — the same rule
+    // test-auth-payload-shape.mjs exists to enforce for students.
     if (req.role === 'admin') {
       const adminCreds = await getAdminCreds();
       return res.json({
-        user: sessionUser(user, req.role),
+        user: { id: null, name: 'Admin', email: adminCreds.email, role: 'admin' },
         mustChangePassword: false
       });
     }
@@ -433,6 +462,46 @@ router.delete('/profile/aadhaar', authMiddleware, requireRole('student'), async 
     res.json({ removed: true, profile: publicProfile(user, 'student') });
   } catch (error) {
     console.error('Aadhaar removal error:', error.message);
+    res.status(500).json({ error: 'PROFILE_SAVE_FAILED' });
+  }
+});
+
+// PATCH /api/auth/profile/board (Workstream H) — answer the one-time re-select
+// prompt shown to accounts migrated off a board the platform no longer serves.
+//
+// This is NOT a second way to edit the board. It exists because the alternative was
+// making a migrated student re-run the whole five-step profile flow to change one
+// field, and because PATCH /profile-details requires every compulsory field to be
+// present — a prompt that only asks for a board cannot satisfy it.
+//
+// `dismiss` clears the flag WITHOUT setting a board. That is deliberate: a prompt
+// with no way out is a modal that traps an account, and the board is still editable
+// from Profile afterwards. A dismissed student keeps an empty board, which the PYQ
+// UI already handles honestly (it asks them to set one) rather than pretending.
+router.patch('/profile/board', authMiddleware, requireRole('student'), async (req, res) => {
+  try {
+    const dismiss = req.body?.dismiss === true;
+    const studyMedium = typeof req.body?.studyMedium === 'string' ? req.body.studyMedium.trim() : '';
+
+    if (!dismiss) {
+      // Same closed-set check as the full profile save, by the same helper — a second
+      // board validator here is how the two would eventually disagree.
+      if (!studyMedium) return res.status(400).json({ error: 'BOARD_REQUIRED' });
+      if (!isKnownBoard(studyMedium)) return res.status(400).json({ error: 'BOARD_NOT_SUPPORTED' });
+    }
+
+    const result = await User.updateOne({ _id: req.userId }, {
+      $set: {
+        ...(dismiss ? {} : { 'profile.studyMedium': canonicalBoard(studyMedium) }),
+        'profile.boardNeedsReselect': false
+      }
+    });
+    if (!result.matchedCount) return res.status(404).json({ error: 'User not found.' });
+
+    const user = await User.findById(req.userId);
+    res.json({ profile: publicProfile(user, 'student') });
+  } catch (error) {
+    console.error('Board re-select error:', error.message);
     res.status(500).json({ error: 'PROFILE_SAVE_FAILED' });
   }
 });

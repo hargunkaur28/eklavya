@@ -227,6 +227,21 @@ export function AuthProvider({ children }) {
     return data.profile;
   }, [authFetch]);
 
+  // Workstream H: answer the one-time board re-select prompt. Mirrors removeAadhaar
+  // exactly — the route returns the whole public profile, so local state is replaced
+  // rather than patched field-by-field and cannot drift from the server's view.
+  // Pass { dismiss: true } to clear the prompt without choosing a board.
+  const reselectBoard = useCallback(async (studyMedium, { dismiss = false } = {}) => {
+    const res = await authFetch('/auth/profile/board', {
+      method: 'PATCH',
+      body: JSON.stringify(dismiss ? { dismiss: true } : { studyMedium })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'PROFILE_SAVE_FAILED');
+    setUser((prev) => (prev ? { ...prev, profile: data.profile } : prev));
+    return data.profile;
+  }, [authFetch]);
+
   // PATCH account-level narration/voice prefs and mirror them onto local user state.
   const updatePreferences = useCallback(async (patch) => {
     const res = await authFetch('/auth/preferences', { method: 'PATCH', body: JSON.stringify(patch) });
@@ -452,6 +467,7 @@ export function AuthProvider({ children }) {
         updatePreferences,
         saveProfileDetails,
         removeAadhaar,
+        reselectBoard,
         updateAdminCredentials,
         uploadProfilePhoto,
         removeProfilePhoto,

@@ -998,14 +998,15 @@ button {
 
 .back-button {
   background: #fff;
-  color: #344054;
+  color: #1F2A1F;
+  border: 1px solid #E4DAC5;
 }
 
 .back-button:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: #F3ECDD;
+  color: #2F6B3A;
   transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(46, 65, 110, 0.08);
+  box-shadow: 0 10px 24px rgba(47, 107, 58, 0.14);
 }
 
 .detail-hero {
@@ -1020,7 +1021,7 @@ button {
 
 .detail-hero img {
   border-radius: 18px;
-  box-shadow: 0 28px 70px rgba(39, 54, 99, 0.15);
+  box-shadow: 0 28px 70px rgba(90, 74, 48, 0.18);
   height: 420px;
   object-fit: cover;
   width: 100%;
@@ -1052,6 +1053,9 @@ button {
 .course-outline,
 .quiz-panel {
   padding: 1.6rem;
+  /* Warm shadow instead of the shared blue-grey one — on cream, a cool drop
+     shadow reads as a grey haze around the card. */
+  box-shadow: 0 16px 40px rgba(90, 74, 48, 0.08);
 }
 
 .course-outline {
@@ -1072,15 +1076,20 @@ button {
 }
 
 .module-item svg {
-  color: #2e6df6;
+  color: #2F6B3A;
   flex: 0 0 auto;
 }
 
 .backend-note {
-  background: #f1f5ff;
+  background: #F3ECDD;
+  border-left: 3px solid #2F6B3A;
   border-radius: 10px;
   margin-top: 1rem;
   padding: 1rem;
+}
+
+.backend-note strong {
+  color: #2F6B3A;
 }
 
 .quiz-heading {
@@ -1091,7 +1100,7 @@ button {
 }
 
 .score-box {
-  background: #111827;
+  background: #1A3A1E;
   border-radius: 12px;
   color: #fff;
   display: grid;
@@ -1105,7 +1114,7 @@ button {
 }
 
 .score-box span {
-  color: #cbd5e1;
+  color: #C3CBB8;
   font-size: 0.82rem;
 }
 
@@ -1122,27 +1131,41 @@ button {
 }
 
 .option-button {
-  background: #f8fafc;
-  border: 1px solid #d9e0eb;
+  background: #FBF8F1;
+  border: 1px solid #E4DAC5;
   border-radius: 9px;
+  color: #1F2A1F;
   cursor: pointer;
   min-height: 48px;
   padding: 0.8rem;
   text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
+.option-button:hover {
+  background: #F3ECDD;
+  border-color: #CFC1A3;
+}
+
+/* Terracotta marks "your pick" and green marks "the right answer", so a wrong
+   pick no longer gets a green ring that reads as approval. */
 .option-button.picked {
-  border-color: #2F6B3A;
-  box-shadow: 0 0 0 3px rgba(47, 107, 58, 0.12);
+  border-color: #E07A3E;
+  box-shadow: 0 0 0 3px rgba(224, 122, 62, 0.16);
 }
 
 .option-button.correct {
-  background: #ecfdf3;
-  border-color: #039855;
+  background: #E9F2EA;
+  border-color: #2F6B3A;
+  color: #1F4025;
+}
+
+.option-button.picked.correct {
+  box-shadow: 0 0 0 3px rgba(47, 107, 58, 0.18);
 }
 
 .explanation {
-  color: #475467;
+  color: #6B6357;
   margin: 0.9rem 0 0;
 }
 
@@ -4936,6 +4959,18 @@ button {
 /* Confirm button */
 .narration-prompt-confirm { width: 100%; margin-top: 0.5rem; }
 
+/* Secondary "not now" action (Workstream H: BoardReselectPrompt).
+   Deliberately quiet — it is the escape hatch that stops a one-time prompt from
+   becoming a modal a student cannot get past, not a peer of the confirm button. */
+.narration-prompt-skip {
+  width: 100%; margin-top: 0.35rem; padding: 0.5rem;
+  background: none; border: 0; cursor: pointer;
+  font-size: 0.86rem; font-weight: 600; color: #7A7264;
+  border-radius: 10px; transition: color 0.15s ease, background 0.15s ease;
+}
+.narration-prompt-skip:hover { color: #2F6B3A; background: #F3ECDD; }
+.narration-prompt-skip:disabled { opacity: 0.5; cursor: default; }
+
 /* Modal slide-up animation (reuse if not already defined) */
 @keyframes modalSlideUp {
   from { opacity: 0; transform: translateY(24px); }
@@ -5391,3 +5426,624 @@ button {
   .detail-header .eklavya-logo-icon { width: 30px; height: 30px; }
   .detail-header .eklavya-title { font-size: 0.98rem; letter-spacing: 0.01em; }
 }
+
+/* ══ Workstream I — Previous Year Questions ═══════════════════════════════ */
+
+.pyq-panel { display: flex; flex-direction: column; gap: 1.1rem; }
+.pyq-heading h3 { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.3rem; color: #2F6B3A; }
+.pyq-heading p { margin: 0; color: #6B6357; font-size: 0.92rem; }
+
+/* ── The source badge ──────────────────────────────────────────────────────
+   The two states differ in COLOUR, BORDER, ICON and TEXT — not colour alone.
+   A student must be able to tell a real past-paper question from an AI-written
+   one at a glance, and colour-only encoding fails anyone who cannot separate
+   green from amber. See PyqSourceBadge.jsx. */
+.pyq-badge {
+  display: inline-flex; align-items: center; gap: 0.32rem;
+  padding: 0.2rem 0.55rem; border-radius: 999px;
+  font-size: 0.74rem; font-weight: 800; letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+/* REAL: solid fill — it carries the authority of an actual paper. */
+.pyq-badge-real {
+  background: #2F6B3A; color: #fff; border: 1px solid #2F6B3A;
+}
+/* GENERATED: outlined and dashed — deliberately reads as provisional, and is
+   never mistakable for the solid badge at a glance or in greyscale. */
+.pyq-badge-generated {
+  background: #FDF6EC; color: #A15C1E; border: 1px dashed #E07A3E;
+}
+
+.pyq-notice {
+  display: flex; gap: 0.8rem; align-items: flex-start;
+  padding: 0.85rem 1rem; border-radius: 12px; border: 1px solid #E4DAC5; background: #FBF8F1;
+}
+.pyq-notice strong { display: block; margin-bottom: 0.2rem; }
+.pyq-notice p { margin: 0; color: #6B6357; font-size: 0.88rem; line-height: 1.5; }
+.pyq-notice-real { border-left: 3px solid #2F6B3A; }
+.pyq-notice-generated { border-left: 3px dashed #E07A3E; }
+
+.pyq-empty {
+  text-align: center; padding: 2rem 1rem; border: 1px dashed #E4DAC5;
+  border-radius: 12px; background: #FBF8F1; color: #6B6357;
+}
+.pyq-empty h4 { margin: 0.6rem 0 0.35rem; color: #1F2A1F; }
+.pyq-empty p { margin: 0 auto; max-width: 46ch; font-size: 0.9rem; line-height: 1.55; }
+
+.pyq-tabs { display: flex; gap: 0.5rem; }
+.pyq-tab {
+  padding: 0.5rem 1.1rem; border-radius: 999px; border: 1px solid #E4DAC5;
+  background: #fff; color: #6B6357; font-weight: 700; cursor: pointer;
+}
+.pyq-tab.active { background: #2F6B3A; color: #fff; border-color: #2F6B3A; }
+
+.pyq-years, .pyq-controls { display: flex; flex-direction: column; gap: 0.55rem; }
+.pyq-years-label { font-size: 0.78rem; font-weight: 800; text-transform: uppercase; color: #6B6357; letter-spacing: 0.04em; }
+.pyq-year-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.pyq-year-chip {
+  padding: 0.35rem 0.8rem; border-radius: 999px; border: 1px solid #E4DAC5;
+  background: #fff; cursor: pointer; font-weight: 700; font-size: 0.85rem; color: #1F2A1F;
+}
+.pyq-year-chip.selected { background: #E9F2EA; border-color: #2F6B3A; color: #2F6B3A; }
+
+.pyq-paper-list { display: grid; gap: 0.6rem; }
+.pyq-paper {
+  text-align: left; padding: 0.85rem 1rem; border-radius: 12px;
+  border: 1px solid #E4DAC5; background: #fff; cursor: pointer;
+}
+.pyq-paper:hover { border-color: #2F6B3A; background: #FBF8F1; }
+.pyq-paper strong { display: block; margin-bottom: 0.2rem; }
+.pyq-paper span { font-size: 0.82rem; color: #6B6357; }
+
+.pyq-blueprint { padding: 0.85rem 1rem; border-radius: 12px; background: #FBF8F1; border: 1px solid #E4DAC5; }
+.pyq-blueprint ul { margin: 0.5rem 0 0; padding-left: 1.1rem; color: #6B6357; font-size: 0.86rem; }
+
+/* Stated BEFORE the exam starts, not discovered afterwards. */
+.pyq-timer-warning {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0; font-size: 0.84rem; color: #A15C1E;
+}
+.pyq-error { display: flex; align-items: center; gap: 0.4rem; color: #B4341F; font-size: 0.88rem; }
+
+.pyq-run-banner {
+  padding: 0.55rem 0.9rem; border-radius: 10px; font-size: 0.86rem; font-weight: 700;
+}
+.pyq-run-banner.real { background: #E9F2EA; color: #2F6B3A; border-left: 3px solid #2F6B3A; }
+.pyq-run-banner.generated { background: #FDF6EC; color: #A15C1E; border-left: 3px dashed #E07A3E; }
+
+.pyq-question {
+  padding: 1rem 1.1rem; border-radius: 12px; border: 1px solid #E4DAC5;
+  background: #fff; margin-top: 0.8rem;
+}
+.pyq-question-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.pyq-qnum {
+  min-width: 26px; height: 26px; border-radius: 8px; background: #F3ECDD; color: #2F6B3A;
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.82rem;
+}
+.pyq-marks { font-size: 0.76rem; font-weight: 700; color: #6B6357; }
+.pyq-question h4 { margin: 0 0 0.7rem; font-size: 1rem; line-height: 1.5; }
+
+/* Extracted page crop (real) and generated SVG share a frame but never a field. */
+.pyq-figure {
+  display: block; max-width: 100%; height: auto; margin: 0 0 0.8rem;
+  border: 1px solid #E4DAC5; border-radius: 10px; background: #fff;
+}
+
+.pyq-options { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.pyq-option {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  text-align: left; padding: 0.7rem 0.85rem; border-radius: 9px;
+  border: 1px solid #E4DAC5; background: #FBF8F1; cursor: pointer; color: #1F2A1F;
+}
+.pyq-option:hover:not(:disabled) { background: #F3ECDD; }
+.pyq-option.chosen { border-color: #E07A3E; box-shadow: 0 0 0 3px rgba(224,122,62,0.16); }
+.pyq-option.correct { background: #E9F2EA; border-color: #2F6B3A; color: #1F4025; }
+.pyq-option.wrong { background: #FBEAE7; border-color: #B4341F; }
+.pyq-explanation {
+  margin: 0.8rem 0 0; padding: 0.7rem 0.85rem; border-radius: 9px;
+  background: #FBF8F1; border-left: 3px solid #2F6B3A; color: #6B6357; font-size: 0.9rem; line-height: 1.55;
+}
+.pyq-written { width: 100%; padding: 0.7rem; border-radius: 9px; border: 1px solid #E4DAC5; font: inherit; resize: vertical; }
+.pyq-written:disabled { background: #F3ECDD; color: #9A9184; cursor: not-allowed; }
+
+/* ── Internal choice ("31. ... OR ...") ───────────────────────────────────
+   Two alternatives of ONE question. The divider has to read as "these are the
+   same question, pick one" rather than as a separator between two questions,
+   which is why it is a centred rule with the word inside it. */
+.pyq-choice-hint {
+  font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em;
+  color: #A15C1E; background: #FDF6EC; border: 1px dashed #E07A3E;
+  padding: 0.12rem 0.45rem; border-radius: 999px;
+}
+.pyq-or-divider {
+  display: flex; align-items: center; gap: 0.6rem;
+  margin: 0.9rem 0; color: #A15C1E;
+  font-size: 0.78rem; font-weight: 850; letter-spacing: 0.08em;
+}
+.pyq-or-divider::before, .pyq-or-divider::after {
+  content: ''; flex: 1; height: 1px; background: #E4DAC5;
+}
+/* The un-chosen alternative stays READABLE — a student must still be able to see
+   what they did not pick — but is visibly out of play. */
+.pyq-alternative.locked { opacity: 0.55; }
+.pyq-alternative.locked .pyq-option { cursor: not-allowed; }
+
+/* ── Exam runner ─────────────────────────────────────────────────────────── */
+.pyq-exam-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 0.7rem 1rem; border-radius: 12px;
+  background: rgba(250,246,236,0.96); backdrop-filter: blur(8px); border: 1px solid #E4DAC5;
+}
+.pyq-exam-timer { display: flex; align-items: center; gap: 0.45rem; font-size: 1.15rem; color: #2F6B3A; }
+.pyq-exam-timer.urgent { color: #B4341F; }
+.pyq-exam-progress { font-size: 0.85rem; color: #6B6357; }
+.pyq-exam-actions { margin-left: auto; display: flex; gap: 0.5rem; }
+.pyq-exam-section h4 {
+  margin: 1.4rem 0 0.2rem; padding-bottom: 0.35rem;
+  border-bottom: 1px solid #E4DAC5; color: #2F6B3A;
+}
+/* Paused: the questions are replaced, not dimmed. A readable paused paper is just
+   the clock switched off while the student keeps working. */
+.pyq-paused-overlay {
+  display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+  padding: 3.5rem 1.5rem; margin-top: 1rem;
+  border: 1px dashed #E4DAC5; border-radius: 14px;
+  background: #FBF8F1; color: #6B6357; text-align: center;
+}
+.pyq-paused-overlay h3 { margin: 0; color: #2F6B3A; font-size: 1.3rem; }
+.pyq-paused-overlay p { margin: 0; max-width: 46ch; line-height: 1.55; font-size: 0.92rem; }
+.pyq-paused-clock { font-size: 1.15rem !important; font-weight: 850; color: #1F2A1F !important; }
+.pyq-resume-btn { border-color: #2F6B3A !important; color: #2F6B3A !important; }
+.pyq-paused-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
+.pyq-paused-hint { font-size: 0.82rem !important; color: #8A8172; }
+
+/* ── Leave dialog ──────────────────────────────────────────────────────────
+   Each choice is a full-width row with its consequence underneath, rather than a
+   pair of terse buttons. The student is choosing what happens to their remaining
+   time, and that is not readable from a verb alone. */
+.pyq-modal-backdrop {
+  position: fixed; inset: 0; z-index: 1200;
+  display: flex; align-items: center; justify-content: center; padding: 1rem;
+  background: rgba(31, 42, 31, 0.55);
+}
+.pyq-modal {
+  width: min(30rem, 100%); max-height: 90vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.7rem;
+  padding: 1.5rem; border-radius: 16px;
+  background: #FFFDF8; border: 1px solid #E4DAC5;
+  box-shadow: 0 18px 48px rgba(31, 42, 31, 0.28);
+}
+.pyq-modal h3 { margin: 0; color: #1F2A1F; font-size: 1.15rem; }
+.pyq-modal-body { margin: 0; color: #6B6357; font-size: 0.9rem; line-height: 1.5; }
+.pyq-modal-choice {
+  display: flex; align-items: flex-start; gap: 0.7rem; width: 100%;
+  padding: 0.85rem 1rem; border-radius: 12px; text-align: left; cursor: pointer;
+  background: #FBF8F1; border: 1px solid #E4DAC5; color: #1F2A1F;
+  font: inherit; transition: border-color 0.15s, background 0.15s;
+}
+.pyq-modal-choice:hover:not(:disabled) { border-color: #2F6B3A; background: #F4F7F0; }
+.pyq-modal-choice:disabled { opacity: 0.6; cursor: default; }
+.pyq-modal-choice.primary { border-color: #2F6B3A; background: #F2F7EE; }
+.pyq-modal-choice svg { flex-shrink: 0; margin-top: 0.15rem; color: #2F6B3A; }
+.pyq-modal-choice span { display: flex; flex-direction: column; gap: 0.15rem; }
+.pyq-modal-choice strong { font-size: 0.95rem; font-weight: 700; }
+.pyq-modal-choice small { font-size: 0.8rem; color: #6B6357; line-height: 1.45; }
+.pyq-modal-cancel { align-self: center; margin-top: 0.2rem; }
+
+.pyq-paused-badge {
+  display: inline-block; margin-left: 0.5rem; padding: 0.1rem 0.5rem;
+  border-radius: 999px; background: #2F6B3A; color: #fff;
+  font-size: 0.72rem; font-weight: 700; vertical-align: middle;
+}
+.pyq-conflict-note { margin: 0.3rem 0 0; font-size: 0.85rem; color: #6B6357; }
+
+.pyq-conflict { padding: 1rem; border-radius: 12px; background: #FDF6EC; border: 1px solid #E07A3E; }
+.pyq-conflict-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
+
+.pyq-score { font-size: 1.6rem; font-weight: 850; color: #2F6B3A; margin: 0.2rem 0 0; }
+/* Sits directly under the mark, deliberately — how the paper was sat qualifies the
+   score, so it should not be findable only by scrolling. */
+.pyq-time-summary { margin: 0.25rem 0 0; font-size: 0.88rem; color: #6B6357; }
+.pyq-section-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.pyq-section-table th, .pyq-section-table td { padding: 0.55rem 0.6rem; text-align: left; border-bottom: 1px solid #E4DAC5; }
+.pyq-section-table th { font-size: 0.76rem; text-transform: uppercase; color: #6B6357; letter-spacing: 0.04em; }
+.pyq-ok { color: #2F6B3A; }
+.pyq-bad { color: #B4341F; }
+.pyq-selfmark { font-size: 0.74rem; font-weight: 700; color: #A15C1E; }
+.pyq-your-answer { margin: 0.6rem 0 0; font-size: 0.9rem; color: #1F2A1F; }
+
+/* ── Admin import console ────────────────────────────────────────────────── */
+.pyq-admin { display: flex; flex-direction: column; gap: 1rem; }
+.pyq-admin-upload { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.pyq-admin-upload input, .pyq-admin-upload select {
+  padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #E4DAC5; font: inherit;
+}
+.pyq-admin-hint { font-size: 0.8rem; color: #6B6357; }
+.pyq-admin-msg { padding: 0.6rem 0.8rem; border-radius: 9px; background: #FBF8F1; border-left: 3px solid #2F6B3A; }
+.pyq-admin-warn {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  padding: 0.75rem 0.9rem; border-radius: 10px;
+  background: #FDF6EC; border-left: 3px solid #E07A3E; color: #A15C1E; font-size: 0.9rem;
+}
+.pyq-admin-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.pyq-admin-table th, .pyq-admin-table td { padding: 0.5rem; text-align: left; border-bottom: 1px solid #E4DAC5; }
+.pyq-status { padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 800; }
+.pyq-status-draft { background: #F3ECDD; color: #A15C1E; }
+.pyq-status-published { background: #E9F2EA; color: #2F6B3A; }
+.pyq-status-failed { background: #FBEAE7; color: #B4341F; }
+.pyq-status-parsing { background: #EEF1F5; color: #475467; }
+.pyq-fallback-warn { display: inline-flex; align-items: center; gap: 0.25rem; margin-left: 0.4rem; font-size: 0.72rem; color: #A15C1E; font-weight: 700; }
+.pyq-parse-error { display: block; font-size: 0.72rem; color: #B4341F; }
+
+.pyq-admin-q { padding: 0.9rem; border: 1px solid #E4DAC5; border-radius: 10px; background: #fff; display: flex; flex-direction: column; gap: 0.5rem; }
+/* A question blocking publication is visually unmissable in the review list. */
+.pyq-admin-q.blocked { border-color: #E07A3E; background: #FDF6EC; }
+.pyq-admin-blocked { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.76rem; font-weight: 700; color: #A15C1E; }
+.pyq-admin-q-head { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.pyq-admin-qnum { width: 70px; }
+.pyq-admin-section { width: 120px; }
+.pyq-admin-marks { width: 60px; }
+.pyq-admin-q input, .pyq-admin-q textarea {
+  padding: 0.45rem 0.55rem; border-radius: 8px; border: 1px solid #E4DAC5; font: inherit; width: 100%;
+}
+.pyq-admin-opt { display: flex; gap: 0.5rem; align-items: center; }
+.pyq-admin-check { display: flex; gap: 0.4rem; align-items: center; font-size: 0.86rem; color: #6B6357; }
+/* Question text grows to fit — never an inner scrollbar on a multi-part question. */
+.pyq-admin-qtext { field-sizing: content; min-height: 4.5rem; max-height: 60vh; line-height: 1.5; }
+
+.pyq-admin-figure {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  padding: 0.6rem; border: 1px dashed #E4DAC5; border-radius: 10px; background: #FBF8F1;
+}
+.pyq-admin-figure:focus-visible { outline: 2px solid #2F6B3A; outline-offset: 2px; }
+/* Large enough to JUDGE — the only thing that can be wrong now is which question a
+   figure landed on, and a 320px thumbnail is not enough to tell. */
+.pyq-admin-figure img {
+  max-width: 100%; max-height: 460px; width: auto;
+  border: 1px solid #E4DAC5; border-radius: 8px; background: #fff;
+}
+.pyq-admin-figure.drop-target { border-color: #2F6B3A; background: #E9F2EA; }
+.pyq-admin-figure-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.pyq-admin-figure-error { margin: 0; color: #B4341F; font-size: 0.84rem; }
+.pyq-admin-sourcepage { max-width: 100%; max-height: 70vh; border: 1px solid #E4DAC5; border-radius: 8px; }
+.pyq-admin-crop summary { cursor: pointer; font-size: 0.85rem; color: #2F6B3A; font-weight: 700; }
+
+/* An OR pair reads as ONE question offering two routes, not two rows to dedupe. */
+.pyq-admin-choice-group {
+  border: 2px solid #E07A3E; border-radius: 12px; padding: 0.6rem;
+  background: #FDF6EC; display: flex; flex-direction: column; gap: 0.5rem;
+}
+/* Publish-confirmation dialog. Wider than the narration prompt it borrows from,
+   because it has to list specific question numbers to be worth reading. */
+.pyq-warn-card { max-width: 560px; text-align: left; }
+.pyq-warn-item {
+  width: 100%; padding: 0.7rem 0.85rem; border-radius: 10px; margin-bottom: 0.5rem;
+  background: #FDF6EC; border-left: 3px solid #E07A3E;
+}
+/* A student seeing an unanswerable question is a different order of problem from
+   degraded read-aloud, and the dialog says so rather than listing both flatly. */
+.pyq-warn-item.sev-high { background: #FBEAE7; border-left-color: #B4341F; }
+.pyq-warn-item strong { display: block; margin-bottom: 0.2rem; font-size: 0.9rem; }
+.pyq-warn-item p { margin: 0; font-size: 0.86rem; line-height: 1.5; color: #5C5649; }
+.pyq-warn-qs { margin-top: 0.35rem !important; font-weight: 700; color: #1F2A1F !important; }
+.pyq-warn-note { font-size: 0.82rem; color: #7A7264; margin: 0.2rem 0 0.4rem; }
+
+.pyq-admin-choice-head {
+  font-size: 0.78rem; font-weight: 850; text-transform: uppercase;
+  letter-spacing: 0.04em; color: #A15C1E;
+}
+.pyq-admin-q-actions { display: flex; gap: 0.5rem; }
+
+@media (max-width: 680px) {
+  .pyq-exam-actions { margin-left: 0; width: 100%; }
+  .pyq-options { grid-template-columns: 1fr; }
+}
+
+/* ══ Exam focus mode ══════════════════════════════════════════════════════
+   Driven by a class on <body> because the chat widget is mounted globally in
+   App.jsx, outside the dashboard tree — there is no prop path from the exam to
+   it. Removed when the exam component unmounts, so submit / exit / teardown all
+   restore normal chrome by one path. */
+
+/* The floating assistant goes entirely. A student should not have an AI tutor a tap
+   away mid-exam; leaving it there makes exam mode meaningless. */
+body.exam-focus .chat-toggle-btn,
+body.exam-focus .chat-panel,
+/* Dashboard chrome: rail on desktop, bottom nav on mobile, plus the greeting header. */
+body.exam-focus .dashboard-sidebar,
+body.exam-focus .pill-sidebar,
+body.exam-focus .dashboard-header,
+body.exam-focus .site-header,
+/* /dashboard renders through PageShell, which carries the site header AND the full
+   marketing footer. A footer with Sign In and Browse Courses links under a running
+   exam is chrome by any definition. */
+body.exam-focus .footer-wrapper {
+  display: none !important;
+}
+
+/* The exam gets the whole card, with the dashboard's own padding and max-width
+   removed so 360px is usable rather than padded to a sliver. */
+body.exam-focus .dashboard-card {
+  /* The card is a FLEX row (rail + main). With the rail hidden, `flex: 1` on main
+     already fills the width — there is no grid here, so no column override. */
+  padding: 0 !important;
+  max-width: none !important;
+  border-radius: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  /* `overflow: hidden` on this card SILENTLY DISABLES position:sticky for everything
+     inside it — a sticky element scrolls within its nearest clipping ancestor, and a
+     clipped, non-scrolling box gives it nothing to stick to. That is why the exam bar
+     stayed pinned in fullscreen (where the exam element is its own scroll container,
+     outside this card) but scrolled away in the normal browser view.
+     The card only clips to keep its rounded corners, and focus mode squares them
+     off anyway, so releasing it here costs nothing. */
+  overflow: visible !important;
+  min-height: 0 !important;
+}
+/* Same reason, one level up — either ancestor clipping is enough to break it. */
+/* ── WHY THE EXAM BECOMES ITS OWN SCROLL CONTAINER ─────────────────────────
+   Releasing `overflow` on the card was not enough, and the reason is further up:
+   `html, body` and `main` all carry `overflow-x: hidden` (to stop wide content
+   causing horizontal scroll). Per spec, setting ONE axis to a non-visible value
+   computes the OTHER axis to `auto` — so `main` is a scroll container, and a sticky
+   descendant sticks to *it* rather than to the viewport. That is precisely why the
+   bar stayed pinned in real fullscreen and nowhere else: a fullscreened element is
+   promoted to the top layer, outside `main` altogether.
+
+   Rather than unpick `overflow-x` globally — it is load-bearing elsewhere and this
+   is not the place to find out how — focus mode gives the exam the same shape
+   fullscreen gives it: a full-height box that scrolls itself. The bar then sticks to
+   a container that genuinely scrolls.
+
+   `100dvh` not `100vh`: on mobile `vh` is the tallest viewport, ignoring the browser
+   chrome, so a `100vh` box is taller than the screen and the bottom of the paper
+   sits under the URL bar. `dvh` tracks the visible viewport and shrinks when the
+   soft keyboard opens — which is exactly the case the sticky bar exists for. `vh`
+   stays as the fallback for anything that does not know `dvh`. */
+body.exam-focus {
+  overflow: hidden;
+  /* RECLAIM THE FIXED-HEADER SPACE. `body` carries `padding-top: 72px` to push
+     content below the fixed `.site-header`. Focus mode HIDES that header but the
+     padding it was reserving stays — leaving an empty 72px band above the exam, and
+     pushing the exam's last 72px off the bottom of the screen (body height 872
+     against an 800px viewport). It is invisible in real fullscreen because a
+     fullscreened element is promoted out of `body` and never sees its padding,
+     which is exactly why the two modes disagreed. */
+  padding-top: 0 !important;
+}
+
+body.exam-focus .dashboard-bg {
+  padding: 0 !important;
+  background: #FAF6EC;
+  overflow: hidden !important;
+  height: 100vh; height: 100dvh;
+}
+body.exam-focus .dashboard-card { height: 100%; min-height: 0 !important; }
+body.exam-focus .dashboard-main {
+  padding: 0 !important; max-width: none !important;
+  height: 100%; min-height: 0; min-width: 0;
+}
+/* THE scroll container. Everything above it is now fixed-height and non-scrolling. */
+body.exam-focus .pyq-exam {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  /* NO TOP PADDING, deliberately. `position: sticky; top: 0` pins to the scroll
+     container's PADDING box, not its border box — so any padding-top here parks the
+     bar that far down and leaves a strip above it where scrolled question text shows
+     through. It reads as a mystery element above the bar. The bar supplies its own
+     internal padding, and the gap below it comes from `.pyq-panel`'s flex gap. */
+  padding: 0 1rem 4rem;
+}
+/* Flush to the top of the scrollport, and OPAQUE. The base bar is 96% alpha with a
+   backdrop blur, which is fine floating over a card but lets question text ghost
+   through when it is the only thing between the student and the scrolling paper. */
+body.exam-focus .pyq-exam-bar {
+  top: 0;
+  margin: 0 -1rem;            /* span the container's horizontal padding */
+  padding-left: 1rem; padding-right: 1rem;
+  background: #FAF6EC;
+  backdrop-filter: none;
+  border-top: 0;
+}
+
+/* THE TIMER MUST STAY VISIBLE — including with a soft keyboard open on a written
+   answer. Sticky rather than fixed: a fixed bar is repositioned by the on-screen
+   keyboard on both iOS and Android and can end up off-screen or floating over the
+   input the student is typing into. Sticky scrolls with the document and simply
+   stays pinned to the top of the viewport, which survives the keyboard. The mobile
+   override that made it `static` is deliberately NOT applied in focus mode. */
+body.exam-focus .pyq-exam-bar {
+  position: sticky; top: 0; z-index: 20;
+  border-radius: 0; border-left: 0; border-right: 0;
+}
+
+/* Real fullscreen, layered on top. The element needs its own background — a
+   fullscreened element with a transparent one renders against black. */
+.pyq-exam:fullscreen {
+  background: #FAF6EC;
+  overflow-y: auto;
+  padding: 0.75rem 1rem 3rem;
+}
+.pyq-exam:fullscreen .pyq-exam-bar { position: sticky; top: 0; }
+
+/* The action row must be allowed to wrap. The shared button rule sets
+   `flex-shrink: 0` and `white-space: nowrap`, so without this the four buttons
+   simply overflow the bar and Submit gets clipped off the right edge. */
+.pyq-exam-actions { flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  /* Top padding stays 0 here too — see the note on the base rule. Re-adding it was
+     an 8px strip on phones where question text showed through above the bar. */
+  body.exam-focus .pyq-exam { padding: 0 0.6rem 4rem; }
+  body.exam-focus .pyq-exam-bar { padding: 0.5rem 0.6rem; gap: 0.5rem; }
+  .pyq-exam-bar { flex-wrap: nowrap; }
+  /* Timer and progress shrink; the buttons keep their tap targets. */
+  .pyq-exam-timer { font-size: 1.02rem; }
+  .pyq-exam-progress { display: none; }
+  .pyq-exam-actions { gap: 0.3rem; margin-left: auto; width: auto; }
+  /* ICON-ONLY below this width. Four labelled buttons do not fit at 360px, and the
+     one that was being clipped was Submit. Labels are dropped, not the buttons —
+     aria-label and title still carry the text. */
+  .pyq-exam-actions .pyq-btn-label { display: none; }
+  .pyq-exam-actions .ghost-button {
+    padding: 0 0.6rem; min-width: 40px; min-height: 40px;
+  }
+  .pyq-exam-actions .primary-button {
+    padding: 0 0.7rem; min-height: 40px; font-size: 0.85rem;
+  }
+}
+
+/* Very narrow: keep Submit readable, shrink the rest further. */
+@media (max-width: 400px) {
+  body.exam-focus .pyq-exam-bar { gap: 0.35rem; padding: 0.45rem 0.5rem; }
+  .pyq-exam-timer { font-size: 0.95rem; gap: 0.3rem; }
+  .pyq-exam-actions .ghost-button { padding: 0 0.5rem; min-width: 36px; }
+}
+
+/* Admin: streak parity with the parent view. Two plain figures rather than the
+   student-facing StreakWidget, which reads the logged-in user — for an admin that
+   would be the admin's own streak shown under a student's name. */
+.admin-streak-row {
+  display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem;
+}
+.admin-streak-stat {
+  flex: 1 1 10rem; display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.85rem 1rem; border-radius: 12px;
+  background: #FBF8F1; border: 1px solid #E4DAC5;
+}
+.admin-streak-stat strong { font-size: 1.5rem; font-weight: 850; color: #2F6B3A; line-height: 1; }
+.admin-streak-stat span { font-size: 0.82rem; color: #6B6357; }
+
+/* ── Bottom-nav overflow ("More") ───────────────────────────────────────────
+   Only exists on mobile; the desktop rail is vertical and fits every item. */
+.pill-more-backdrop {
+  position: fixed; inset: 0; z-index: 41; background: rgba(31, 42, 31, 0.35);
+}
+.pill-more-sheet {
+  position: fixed; z-index: 42;
+  left: 0.5rem; right: 0.5rem;
+  bottom: calc(4.25rem + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 0.25rem;
+  padding: 0.5rem; border-radius: 16px;
+  background: #FFFFFF; border: 1px solid #E4DAC5;
+  box-shadow: 0 -10px 30px rgba(31, 42, 31, 0.18);
+}
+.pill-more-item {
+  display: flex; align-items: center; gap: 0.7rem; width: 100%;
+  padding: 0.8rem 0.9rem; border-radius: 12px; cursor: pointer;
+  background: transparent; border: none; font: inherit;
+  font-size: 0.92rem; font-weight: 700; color: #1F2A1F; text-align: left;
+}
+.pill-more-item.is-active { background: #EAF4E9; color: #2F6B3A; }
+.pill-more-item .pill-avatar { width: 20px; height: 20px; border-radius: 50%; }
+
+/* Admin / parent bottom nav — hidden until mobile, where the rail stops being one. */
+.shell-bottom-nav { display: none; }
+
+@media (max-width: 768px) {
+  /* The rail keeps the brand and sign-out but gives up navigation, which moves to
+     the fixed bar below. Both existing at once would be two navs for one view. */
+  .dashboard-rail-nav { display: none; }
+
+  .shell-bottom-nav {
+    display: flex;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    align-items: stretch; gap: 0.15rem;
+    padding: 0.4rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom));
+    background: #FFFFFF; border-top: 1px solid #E4DAC5;
+    box-shadow: 0 -6px 20px rgba(31, 42, 31, 0.08);
+  }
+  .shell-bottom-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.2rem; padding: 0.5rem 0.25rem; border-radius: 12px; cursor: pointer;
+    background: transparent; border: none; font: inherit;
+    font-size: 0.68rem; font-weight: 700; color: #6B6357; line-height: 1.1; text-align: center;
+  }
+  .shell-bottom-item.active { background: #EAF4E9; color: #2F6B3A; }
+
+  /* Room for the fixed bar, so the last row of content is not sitting under it. */
+  .dashboard-main { padding-bottom: 6rem; }
+}
+
+/* ── Onboarding at phone widths ─────────────────────────────────────────────
+   `.pf-nav` is one `space-between` row. That holds for Back + Continue, but the
+   FINAL step adds a third button (Skip these + Finish), and three of them do not
+   fit at 360px: the labels wrap to two lines and Finish is pushed off the right
+   edge — the one control the student needs to complete onboarding at all. */
+@media (max-width: 480px) {
+  .pf-card { padding: 1.15rem 0.9rem; gap: 0.7rem; }
+  /* The avatar is decoration; at this width it is competing with the content
+     column for room the content needs. */
+  .pf-avatar { width: 34px; height: 34px; }
+
+  .pf-nav { flex-wrap: wrap; gap: 0.5rem; }
+  /* Back keeps its own row; the final pair wraps below and shares the width
+     evenly, so neither is clipped and neither label has to wrap. */
+  .pf-final { flex: 1 1 100%; gap: 0.5rem; }
+  .pf-final > * { flex: 1 1 0; }
+  .pf-primary, .pf-ghost { padding: 0.7rem 0.8rem; white-space: nowrap; }
+
+  /* A question that reserves 2.6em collapses the space available to the fields
+     it introduces once the text itself wraps to three lines. */
+  .pf-question { font-size: 1rem; min-height: 0; margin-bottom: 0.9rem; }
+}
+
+/* Very narrow (≤360px): stack every action full width. Two 160px-wide buttons
+   side by side leave no room for their icons. */
+@media (max-width: 360px) {
+  .pf-nav { flex-direction: column-reverse; align-items: stretch; }
+  .pf-final { flex-direction: column-reverse; }
+  .pf-nav > .pf-ghost, .pf-final > * { width: 100%; }
+}
+
+/* ── Admin / parent rail on a phone ─────────────────────────────────────────
+   Once navigation moved to the bottom bar, the rail is only a brand and a
+   sign-out button — but it kept the full-height column's padding and a 220px
+   layout's proportions, so it rendered as a tall green slab that pushed the
+   actual content off the first screen. It should read as a title bar, not a
+   panel. Placed after the earlier 768px block so these win. */
+@media (max-width: 768px) {
+  .dashboard-rail {
+    padding: 0.55rem 0.85rem;
+    flex-wrap: nowrap;             /* brand and sign-out share ONE line */
+    gap: 0.5rem;
+    border-radius: 0;
+    min-height: 0;
+  }
+  .dashboard-rail-top {
+    flex: 1 1 auto;
+    min-width: 0;                  /* lets the title ellipsize instead of pushing */
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+  }
+  .dashboard-rail-brand { min-width: 0; gap: 0.5rem; }
+  /* The title is the first thing to give way — the sign-out button must stay
+     fully visible and tappable at every width. */
+  .dashboard-rail-title {
+    font-size: 0.95rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .dashboard-rail-icon { width: 30px; height: 30px; flex-shrink: 0; }
+  .dashboard-rail-footer { flex-shrink: 0; margin-left: auto; }
+  .dashboard-rail-logout { width: auto; padding: 0.45rem 0.7rem; font-size: 0.82rem; white-space: nowrap; }
+}
+
+/* Below ~420px the words "Admin Console" and "Sign out" together no longer fit
+   next to an icon. The label goes; the icon alone is unambiguous next to it, and
+   aria-label carries the meaning for screen readers. */
+@media (max-width: 420px) {
+  .dashboard-rail-logout .rail-logout-label { display: none; }
+  .dashboard-rail-logout { padding: 0.45rem 0.55rem; }
+}
+
+/* Results are scrolled into view the moment they exist (useScrollToResult). The
+   header is fixed, so `block: 'start'` would tuck the score underneath it. A
+   scroll-margin is used rather than a computed offset because the scrolling box
+   is sometimes `main` and sometimes the document, and scroll-margin is honoured
+   by whichever one actually scrolls. */
+.quiz-result-banner,
+.pyq-panel > .pyq-heading { scroll-margin-top: 5.5rem; }

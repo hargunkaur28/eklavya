@@ -9,7 +9,8 @@ const GooeyNav = ({
   particleR = 100,
   timeVariance = 300,
   colors = [1, 2, 3, 1, 2, 3, 1, 4],
-  initialActiveIndex = 0
+  initialActiveIndex = 0,
+  onNavigate
 }) => {
   const containerRef = useRef(null);
   const navRef = useRef(null);
@@ -96,6 +97,18 @@ const GooeyNav = ({
   const handleClick = (e, index) => {
     const item = items[index];
     const liEl = e.currentTarget.parentElement;
+
+    // When the host supplies a navigation handler it owns routing entirely — it can
+    // route with the router instead of a full page load, and it knows what to do when
+    // the target section lives on a page we are not currently on. The fallback below
+    // only handled the already-on-the-landing-page case and let every other route fall
+    // through to a dead anchor.
+    if (onNavigate) {
+      onNavigate(e, item?.href || '#');
+      setActiveIndex(index);
+      if (liEl) updateEffectPosition(liEl);
+      return;
+    }
 
     if (item && item.href) {
       if (item.href === '#' || item.href === '/' || item.href === '/#') {

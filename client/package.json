@@ -12,7 +12,8 @@
     "accept:notes": "node acceptance-mynotes.mjs",
     "accept:notes-tree": "node acceptance-notes-tree.mjs",
     "accept:narration": "node acceptance-narration.mjs",
-    "verify:narration": "node verify-narration-stop.mjs"
+    "verify:narration": "node verify-narration-stop.mjs",
+    "accept:exam-focus": "node acceptance-exam-focus.mjs"
   },
   "dependencies": {
     "@tiptap/extension-image": "2.11.5",

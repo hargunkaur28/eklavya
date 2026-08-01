@@ -17,20 +17,13 @@
 // else. Codes are also stable: rewording the message never breaks a client.
 
 import { isValidAadhaar, normalizeAadhaar } from './verhoeff.js';
+import { BOARDS, isKnownBoard } from '../config/taxonomy.js';
 
-// Boards are config, not free text in a route handler. 'Other' unlocks a free-text
-// value, which is validated as a plain string rather than against this list.
-export const STUDY_MEDIUMS = [
-  'CBSE',
-  'ICSE',
-  'Haryana Board (HBSE)',
-  'Punjab Board (PSEB)',
-  'UP Board',
-  'Maharashtra (MSBSHSE)',
-  'Bihar (BSEB)',
-  'Rajasthan (RBSE)',
-  'Other'
-];
+// Workstream H: the board list moved to config/taxonomy.js — it is mirrored to the
+// client and drift-guarded there, and the PYQ corpus is keyed by it. This re-export
+// is the compatibility surface for /auth/profile-config's response shape; it is NOT
+// a second list. Do not re-declare boards here.
+export const STUDY_MEDIUMS = BOARDS;
 
 const AGE_MIN = 5;
 const AGE_MAX = 25;
@@ -52,12 +45,17 @@ export function validateCompulsory(body) {
     errors.age = 'AGE_OUT_OF_RANGE';
   }
 
+  // Workstream H: this is now a CLOSED SET. It used to accept any string under 60
+  // characters, because 'Other' unlocked a free-text board — so a client sending
+  // 'ICSE' was silently accepted and stored. It is rejected by name now: the board
+  // decides which past-paper corpus a student is offered, and a value the server
+  // cannot serve must fail loudly at the boundary rather than become a profile that
+  // permanently resolves to "no papers".
   const medium = str(body.studyMedium);
   if (!medium) {
     errors.studyMedium = 'BOARD_REQUIRED';
-  } else if (!STUDY_MEDIUMS.includes(medium) && medium.length > 60) {
-    // 'Other' free text is allowed but bounded.
-    errors.studyMedium = 'BOARD_TOO_LONG';
+  } else if (!isKnownBoard(medium)) {
+    errors.studyMedium = 'BOARD_NOT_SUPPORTED';
   }
 
   const father = str(body.fatherName);

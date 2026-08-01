@@ -119,8 +119,21 @@ export default function ProfileDetailsSection() {
         {fe('age')}
 
         <label className="pf-label">{ts.boardLabel}</label>
+        {/* Workstream H: an account created before the board reduction can still hold
+            'ICSE' or an 'Other' free-text value — the backfill is opt-in, so this
+            component cannot assume it has run. Without the disabled option below, a
+            <select> whose value matches no <option> renders BLANK: the student is
+            shown an empty board they never chose, and any save silently rewrites
+            their answer to whatever they happen to pick next. Rendering it disabled
+            keeps it readable and honest — it is visibly there and visibly not
+            re-selectable — and the two real boards are the only ways out. */}
         <select className="pf-input" value={form.studyMedium} onChange={(e) => set({ studyMedium: e.target.value })}>
           <option value="">—</option>
+          {form.studyMedium && !boards.includes(form.studyMedium) && (
+            <option value={form.studyMedium} disabled>
+              {`${t.boards[form.studyMedium] || form.studyMedium} ${ts.boardNoLongerSupported}`}
+            </option>
+          )}
           {boards.map((b) => <option key={b} value={b}>{t.boards[b] || b}</option>)}
         </select>
         {fe('studyMedium')}
