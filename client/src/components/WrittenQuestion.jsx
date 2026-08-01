@@ -3,18 +3,26 @@
 // dashboard so the input + review render ONE way. Written answers are framed by
 // THRESHOLD ("Below threshold"), never "Incorrect".
 import { translations } from '../data/translations.js';
+import MicButton from './MicButton.jsx';
 
 // The answer input shown while taking a quiz.
 export function WrittenInput({ value, onChange, placeholder, disabled = false }) {
+  // The mic lives HERE rather than at each call site, so PracticeMode, ModuleQuiz, the
+  // diagnostic and the dashboard all get dictation from one change and cannot drift
+  // apart — the same reason this component exists at all. MicButton renders nothing
+  // when the device has no speech support, so callers need no capability check.
   return (
-    <textarea
-      className="quiz-written-input"
-      value={value || ''}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      disabled={disabled}
-      rows={5}
-    />
+    <div className="quiz-written-wrap">
+      <textarea
+        className="quiz-written-input"
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        rows={5}
+      />
+      <MicButton value={value || ''} disabled={disabled} onTranscript={onChange} />
+    </div>
   );
 }
 

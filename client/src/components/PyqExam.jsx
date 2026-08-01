@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { stopNarration } from '../utils/narrationController.js';
 import PyqSourceBadge from './PyqSourceBadge.jsx';
+import SpeakerButton from './SpeakerButton.jsx';
+import MicButton from './MicButton.jsx';
 
 // Workstream I6 — the exam runner.
 //
@@ -459,7 +461,21 @@ export default function PyqExam({ attemptId, onExit, onFinished }) {
                   return (
                     <div className={`pyq-alternative ${locked ? 'locked' : ''}`} key={q._id}>
                       {ai > 0 && <div className="pyq-or-divider"><span>{t('pyq.or')}</span></div>}
-                      <h4>{q.questionText}</h4>
+                      <div className="pyq-q-head">
+                        <h4>{q.questionText}</h4>
+                        {/* Reading a full board paper is a lot of text; a student who
+                            reads slowly loses exam time to decoding rather than to
+                            answering. Keyed by question id so switching questions
+                            starts a new narration instead of resuming the old one. */}
+                        <SpeakerButton
+                          key={q._id}
+                          ttsText={q.questionText}
+                          fallbackText={q.questionText}
+                          subject={state?.subject || ''}
+                          className="pyq-speaker"
+                          size={16}
+                        />
+                      </div>
                       {q.diagramUrl && <img className="pyq-figure" src={q.diagramUrl} alt={q.diagramAlt} />}
                       {q.diagramSvg && (
                         <div className="pyq-figure" role="img" aria-label={q.diagramAlt}
@@ -489,6 +505,18 @@ export default function PyqExam({ attemptId, onExit, onFinished }) {
                           // answer instead of one per character, and blur fires
                           // before a tab close in every browser this app targets.
                           onBlur={(e) => saveAnswer(q, { writtenAnswer: e.target.value })}
+                        />
+                      )}
+                      {!q.options.length && (
+                        <MicButton
+                          value={answers[q._id]?.writtenAnswer || ''}
+                          disabled={locked}
+                          onTranscript={(text) => {
+                            setAnswers((a) => ({ ...a, [q._id]: { ...a[q._id], writtenAnswer: text } }));
+                            // Dictation never fires blur, so without this an answer
+                            // spoken and then submitted straight away is never saved.
+                            saveAnswer(q, { writtenAnswer: text });
+                          }}
                         />
                       )}
                     </div>

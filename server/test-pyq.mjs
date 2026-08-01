@@ -708,6 +708,51 @@ let attemptId;
   const stored = await PyqQuestion.findById(d.questions[0]._id).lean();
   check('the ENGLISH original is preserved, not overwritten by the translation',
     /Section [AB] question|In the figure below/.test(stored.questionText), stored.questionText.slice(0, 45));
+
+  // ── EXAM MODE IN HINDI ───────────────────────────────────────────────────
+  // Practice mode was the only translated path with a test. Exam mode calls the same
+  // `localiseAll` at three separate places — start, resume and results — and each one
+  // reads its language from a DIFFERENT source (body on start and submit, query string
+  // on resume). A single one of those wired to the wrong field falls back to English
+  // silently, because the serializer's `translatedHindiQuestionText || questionText`
+  // cannot tell "no translation yet" from "English was asked for".
+  const dev = /[ऀ-ॿ]/;
+
+  // Clear any attempt left open by the earlier exam checks, so this starts clean.
+  await ExamAttempt.deleteMany({ userId, paperId: paper._id });
+
+  const hiStart = await fetch(`${API}/pyq/exam/start`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ grade: 'Class 10', subject: 'Maths', paperId: paper._id, language: 'hi' })
+  });
+  const hs = await hiStart.json();
+  check('exam mode STARTS in Hindi', hiStart.ok && (hs.questions || []).some((q) => dev.test(q.questionText)),
+    `HTTP ${hiStart.status}, ${(hs.questions || []).filter((q) => dev.test(q.questionText)).length} Hindi question(s)`);
+
+  // Resume reads `?lang=`, not the body — a different code path from start.
+  const hiResume = await fetch(`${API}/pyq/exam/${hs.attemptId}?lang=hi`, { headers: H });
+  const hr = await hiResume.json();
+  check('exam RESUME serves Hindi', hiResume.ok && (hr.questions || []).some((q) => dev.test(q.questionText)),
+    `${(hr.questions || []).filter((q) => dev.test(q.questionText)).length} Hindi question(s)`);
+
+  // Sections are the paper's own printed names and are NOT translated — asserted so
+  // that stays a decision rather than something discovered later as a bug.
+  check('exam keeps the paper\'s printed section names untranslated',
+    (hr.sections || []).every((s) => !dev.test(s.name || s)), JSON.stringify(hr.sections?.slice(0, 2)));
+
+  // English must still be the stored truth after an exam-mode translation too.
+  const afterExam = await PyqQuestion.findById(hr.questions[0]._id).lean();
+  check('exam translation does not overwrite the stored English',
+    !dev.test(afterExam.questionText), afterExam.questionText.slice(0, 45));
+
+  const hiSubmit = await fetch(`${API}/pyq/exam/${hs.attemptId}/submit`, {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ localDate: new Date().toLocaleDateString('en-CA'), language: 'hi' })
+  });
+  const hsub = await hiSubmit.json();
+  const hiRows = (hsub.results?.questions || []).filter((q) => dev.test(q.questionText || ''));
+  check('exam RESULTS come back in Hindi', hiSubmit.ok && hiRows.length > 0,
+    `HTTP ${hiSubmit.status}, ${hiRows.length} Hindi row(s) in the review`);
 }
 
 // ════ 12. NO ROADMAP SIDE EFFECTS ══════════════════════════════════════════

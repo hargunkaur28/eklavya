@@ -6047,3 +6047,36 @@ body.exam-focus .pyq-exam-bar {
    by whichever one actually scrolls. */
 .quiz-result-banner,
 .pyq-panel > .pyq-heading { scroll-margin-top: 5.5rem; }
+
+/* ── Read-aloud + dictation on questions and answers ────────────────────────
+   The speaker sits beside the question text rather than above it, so a long
+   question does not push the control off-screen on a phone. */
+.pyq-q-head { display: flex; align-items: flex-start; gap: 0.5rem; }
+.pyq-q-head h4 { flex: 1; min-width: 0; margin: 0; }
+.pyq-speaker { flex-shrink: 0; margin-top: 0.1rem; }
+
+.quiz-written-wrap { display: flex; flex-direction: column; gap: 0.4rem; }
+.mic-button-wrap { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.mic-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+  /* 40px minimum: this is a touch target on a phone, and a student dictating an
+     answer is usually holding the device one-handed. */
+  min-width: 40px; min-height: 40px; padding: 0.5rem 0.7rem;
+  border-radius: 10px; cursor: pointer;
+  background: #FBF8F1; border: 1px solid #E4DAC5; color: #4A5A4A;
+  font: inherit; transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.mic-button:hover:not(:disabled) { border-color: #2F6B3A; color: #2F6B3A; }
+.mic-button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* Recording must be unmistakable — a student who thinks it stopped will keep
+   talking, and a student who thinks it is running will wait in silence. */
+.mic-button.recording {
+  background: #B3261E; border-color: #B3261E; color: #fff;
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(179, 38, 30, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(179, 38, 30, 0); }
+}
+@media (prefers-reduced-motion: reduce) { .mic-button.recording { animation: none; } }
+.mic-notice { font-size: 0.78rem; color: #6B6357; }
