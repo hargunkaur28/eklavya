@@ -11,6 +11,8 @@ import AdminConfig from '../models/AdminConfig.js';
 import { sendEmail } from '../utils/sendEmail.js';
 import { buildFailedLoginAlertEmail } from '../utils/emailTemplates.js';
 import { validatePassword, passwordErrorMessage } from '../utils/validatePassword.js';
+import { getMentorMaxGrade, gradeIndex } from '../utils/mentorConfig.js';
+import { GRADES } from '../config/taxonomy.js';
 
 // Phase 6: admin panel. The admin is NOT a User document — it is configured
 // entirely from the environment (ADMIN_EMAIL / ADMIN_PASSWORD_HASH / ADMIN_
@@ -207,6 +209,54 @@ router.patch('/credentials', ...adminOnly, async (req, res) => {
   } catch (error) {
     console.error('Admin credentials update error:', error.message);
     res.status(500).json({ error: 'Server error updating admin credentials.' });
+  }
+});
+
+// ── Feature 27: the Voice Mentor's grade ceiling ───────────────────────────
+//
+// "Which children cannot yet read the interface" is a question about a deployment's
+// actual students, so it is a SETTING rather than a constant compiled into the client.
+// Persisted in AdminConfig with the same DB-override-beats-env precedence the admin
+// credentials use, because env vars are not app-editable on Render and an operator
+// without deploy access could otherwise never change it.
+//
+// GET returns the ordered grade list alongside the current value: the admin UI renders
+// a picker from the taxonomy rather than a free-text box, so an unservable value cannot
+// be typed in the first place. (`getMentorMaxGrade` still refuses to honour one, since
+// a stale or hand-edited document can hold anything.)
+router.get('/mentor-config', adminOnly, async (req, res) => {
+  try {
+    res.json({ mentorMaxGrade: await getMentorMaxGrade(), grades: GRADES });
+  } catch (error) {
+    console.error('Admin mentor-config read error:', error.message);
+    res.status(500).json({ error: 'Server error reading mentor configuration.' });
+  }
+});
+
+router.patch('/mentor-config', ...adminOnly, async (req, res) => {
+  try {
+    const { mentorMaxGrade } = req.body || {};
+    // Validated against the taxonomy, not merely against being a string. An unknown
+    // grade resolves to index -1, which compares below every real grade — so a typo
+    // would silently disable the mentor for EVERY student, with no error anywhere and
+    // nothing in the UI to indicate why the feature had vanished.
+    if (typeof mentorMaxGrade !== 'string' || gradeIndex(mentorMaxGrade) < 0) {
+      return res.status(400).json({ error: 'MENTOR_GRADE_NOT_IN_TAXONOMY', grades: GRADES });
+    }
+
+    await AdminConfig.findOneAndUpdate(
+      { singleton: 'admin' },
+      { $set: { mentorMaxGrade, updatedAt: new Date() } },
+      { upsert: true, new: true }
+    );
+
+    // Takes effect for NEW sessions. Deliberately not pushed into running ones: a
+    // mentor that stops mid-sentence because an admin saved a form is, to a child,
+    // indistinguishable from a mentor that broke.
+    res.json({ success: true, mentorMaxGrade });
+  } catch (error) {
+    console.error('Admin mentor-config update error:', error.message);
+    res.status(500).json({ error: 'Server error saving mentor configuration.' });
   }
 });
 

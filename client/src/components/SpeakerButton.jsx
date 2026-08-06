@@ -14,6 +14,11 @@ export default function SpeakerButton({
   fallbackText = '',     // explicit last-resort text for Web Speech (e.g. a Mentor reply)
   autoPlay = false,      // Phase 3: auto-trigger on mount when true (caller must key by question)
   onEnded = null,        // Callback when audio finishes playing naturally
+  // Fires when narration ENDS WITHOUT SUCCEEDING — an error, or an autoplay block.
+  // A chain that advances only on `onEnded` stops dead at the first failure, which is
+  // exactly what happened on device: question 1's narration was blocked, so questions
+  // 2..n were never narrated at all and it read as "only Q1 is narrated".
+  onFailed = null,
   size = 18,
   className = '',
   style = {}
@@ -144,7 +149,23 @@ export default function SpeakerButton({
       if (data.success && data.audio) return { src: `data:audio/wav;base64,${data.audio}` };
       if (data.useFallback || !data.audioUrl) {
         const textToSpeak = data.fallbackText || extractTextForFallback();
-        const speakLang = data.fallbackText ? narrationLang : language;
+        // ── THE LANGUAGE OF THE TEXT, NOT THE STUDENT'S PREFERENCE ───────────
+        //
+        // This line read `data.fallbackText ? narrationLang : language`, and
+        // `narrationLang` is what the student wants to HEAR. It says nothing about what
+        // the server actually sent. When a quiz question could not be translated the
+        // server correctly returns ENGLISH text, and this spoke it with `lang: 'hi'` —
+        // English words in a Hindi voice, on some questions and not others.
+        //
+        // That is the A3 defect at its THIRD site: the diagnostic route (fixed via
+        // `sourceLang`), the fallback responses that omitted `fallbackLang` (fixed), and
+        // here — the client filling the gap with a proxy. Every server route now sends
+        // `fallbackLang`; this trusts it and NEVER substitutes the preference.
+        //
+        // `language` (the site toggle) remains the last resort only for text this
+        // component extracted itself from `fetchPayload`, which is by definition the
+        // text already on screen.
+        const speakLang = data.fallbackLang || language;
         if (textToSpeak) return { speak: { text: textToSpeak, lang: speakLang } };
         throw new Error('No audio URL returned');
       }
@@ -157,7 +178,11 @@ export default function SpeakerButton({
       resolve,
       fallback: fb ? { text: fb, lang: narrationLang } : null,
       onEnded: () => { if (onEndedRef.current) onEndedRef.current(); },
-      onError: (kind) => { if (kind !== 'blocked') { setErrorType('unavailable'); } },
+      onError: (kind) => {
+        if (kind !== 'blocked') { setErrorType('unavailable'); }
+        // Both an error and an autoplay block END this question's narration.
+        onFailed?.(kind);
+      },
       prime: true
     });
   };

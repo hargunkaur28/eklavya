@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test:units": "node test-note-save.mjs && node test-note-paste.mjs",
+    "test:units": "node test-note-save.mjs && node test-note-paste.mjs && node test-mentor-voice.mjs",
     "accept:onboarding": "node acceptance-onboarding.mjs",
     "accept:notes": "node acceptance-mynotes.mjs",
     "accept:notes-tree": "node acceptance-notes-tree.mjs",

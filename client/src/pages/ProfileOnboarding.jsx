@@ -7,6 +7,8 @@ import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
 import { saveDraft, loadDraft, clearDraft } from '../utils/onboardingDraft.js';
 import { STEPS, TOTAL_STEPS, firstOffendingStep } from '../utils/onboardingSteps.js';
+import { useMentor } from '../context/MentorContext.jsx';
+import MentorFieldMic from '../components/MentorFieldMic.jsx';
 
 // Workstream B5 — the animated profile onboarding flow.
 //
@@ -15,6 +17,24 @@ import { STEPS, TOTAL_STEPS, firstOffendingStep } from '../utils/onboardingSteps
 // student on the very first thing they do on the platform.
 
 const AVATAR = '/chatbot-avatar.png';
+
+// Feature 27 — which cached line the mentor speaks on each step.
+//
+// These MIRROR the written questions rather than replacing them: the text on screen is
+// unchanged and the mentor says the same thing. A child who can read a little must not
+// see one sentence and hear another.
+//
+// The 'optional' step maps to the Aadhaar/location OPT-OUT line and nothing else. The
+// mentor says the step is skippable and stops. It does not read the Aadhaar field, does
+// not offer a microphone for it (that is enforced by absence from VOICE_FILLABLE_FIELDS,
+// not by a check here), and there is no line anywhere that reads a number back.
+const MENTOR_STEP_LINES = {
+  age: 'profile.age',
+  board: 'profile.board',
+  family: 'profile.family',
+  school: 'profile.school',
+  optional: 'profile.optional'
+};
 
 /** Types text in, but NEVER gates the input — see useTypewriter's contract below. */
 function useTypewriter(text, enabled) {
@@ -39,6 +59,7 @@ export default function ProfileOnboarding() {
   const { language, setLanguage } = useLanguage();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
+  const mentor = useMentor();
 
   const t = translations[language]?.profileFlow || translations.en.profileFlow;
   const errText = (code) => {
@@ -261,6 +282,16 @@ export default function ProfileOnboarding() {
                     onKeyDown={(e) => e.key === 'Enter' && next()}
                     aria-label={t.questions.age}
                   />
+                  {/* Age is READ BACK despite being short and numeric, which is exactly
+                      why it feels safe to skip. Age is what the entire course level is
+                      derived from, so a misheard 5-for-9 is not a small error — it is a
+                      wrong roadmap the child then studies for a fortnight. */}
+                  <MentorFieldMic
+                    field="age" lineId={MENTOR_STEP_LINES.age}
+                    value={form.age}
+                    onValue={(v) => { set({ age: String(v) }); clearFieldError('age'); }}
+                    onHandover={() => inputRef.current?.focus()}
+                  />
                   {err('age')}
                 </>
               ) : stepDef.id === 'board' ? (
@@ -278,6 +309,15 @@ export default function ProfileOnboarding() {
                       </button>
                     ))}
                   </div>
+                  {/* A closed set: the board is MATCHED against the taxonomy, never
+                      free-texted. An unmatched answer re-asks once and then leaves the
+                      visual picker as the way through — a wrong board silently promises
+                      a syllabus and a paper corpus that will never appear. */}
+                  <MentorFieldMic
+                    field="studyMedium" lineId={MENTOR_STEP_LINES.board} boards={boards}
+                    value={form.studyMedium}
+                    onValue={(v) => { chooseBoard(v); }}
+                  />
                   {err('studyMedium')}
                 </>
               ) : stepDef.id === 'family' ? (
@@ -289,6 +329,12 @@ export default function ProfileOnboarding() {
                     onKeyDown={(e) => e.key === 'Enter' && next()}
                     aria-label={t.questions.family}
                   />
+                  <MentorFieldMic
+                    field="fatherName" lineId={MENTOR_STEP_LINES.family}
+                    value={form.fatherName}
+                    onValue={(v) => { set({ fatherName: String(v) }); clearFieldError('fatherName'); }}
+                    onHandover={() => inputRef.current?.focus()}
+                  />
                   {err('fatherName')}
                 </>
               ) : stepDef.id === 'school' ? (
@@ -299,6 +345,12 @@ export default function ProfileOnboarding() {
                     onChange={(e) => { set({ schoolName: e.target.value }); clearFieldError('schoolName'); }}
                     aria-label={t.schoolLabel}
                   />
+                  <MentorFieldMic
+                    field="schoolName" lineId={MENTOR_STEP_LINES.school}
+                    value={form.schoolName}
+                    onValue={(v) => { set({ schoolName: String(v) }); clearFieldError('schoolName'); }}
+                    onHandover={() => inputRef.current?.focus()}
+                  />
                   {err('schoolName')}
                   <input
                     className="pf-input" type="text" maxLength={80}
@@ -307,11 +359,25 @@ export default function ProfileOnboarding() {
                     onKeyDown={(e) => e.key === 'Enter' && next()}
                     aria-label={t.cityLabel}
                   />
+                  {/* The city question is its own spoken line: "which school" and
+                      "which city" on one screen is two questions, and a child answering
+                      by ear can only hold one at a time. */}
+                  <MentorFieldMic
+                    field="schoolCity" lineId="profile.city"
+                    value={form.schoolCity}
+                    onValue={(v) => { set({ schoolCity: String(v) }); clearFieldError('schoolCity'); }}
+                  />
                   {err('schoolCity')}
                 </>
               ) : (
                 <>
                   <p className="pf-optional-note">{t.optionalNote}</p>
+                  {/* THE ONLY MENTOR PRESENCE ON THIS STEP. It speaks the Aadhaar /
+                      location opt-out line and stops. `field` is deliberately a name
+                      that is NOT in VOICE_FILLABLE_FIELDS, so no microphone renders —
+                      the control cannot exist for Aadhaar rather than being hidden by a
+                      condition someone could later invert. */}
+                  <MentorFieldMic field="__optional_notice__" lineId={MENTOR_STEP_LINES.optional} />
 
                   <label className="pf-label">{t.phoneLabel}</label>
                   <input

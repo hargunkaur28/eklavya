@@ -1,4 +1,20 @@
 import { useEffect, useRef } from 'react';
+import { stopNarration } from '../utils/narrationController.js';
+
+// ── The ONE playing video ───────────────────────────────────────────────────
+// Module scope, like narrationController's playback state and for the identical
+// reason: ownership per component means nothing can stop "whatever is playing now".
+// Claiming pauses the previous player.
+let currentPlayer = null;
+function claimVideoPlayback(player) {
+  if (currentPlayer && currentPlayer !== player) {
+    try { currentPlayer.pauseVideo?.(); } catch { /* already destroyed */ }
+  }
+  currentPlayer = player;
+}
+function releaseVideoPlayback(player) {
+  if (currentPlayer === player) currentPlayer = null;
+}
 
 // Phase 2: loads the YouTube IFrame Player API once (returns a shared promise),
 // so multiple players on a page don't each inject the script.
@@ -83,6 +99,23 @@ export default function YouTubePlayer({ videoId, onProgress, autoplay = true }) 
               const state = window.YT?.PlayerState;
               if (!state) return;
               if (e.data === state.PLAYING) {
+                // ── ONE PLAYING VIDEO, AND IT SILENCES THE MENTOR ──────────
+                //
+                // Design Rule 10's shape, applied to video. Playback was owned
+                // per-player, so nothing could stop "whatever is playing right now" —
+                // and on the device several videos played at once, over each other and
+                // over the mentor.
+                //
+                // Registering the CURRENT player at module scope and stopping the
+                // previous one makes two simultaneous videos structurally impossible
+                // rather than merely discouraged, exactly as narrationController does
+                // for audio.
+                //
+                // Stopping narration too is not a nicety: the mentor and a video talking
+                // over each other is the same defect one layer up, and a child cannot
+                // separate two voices to work out which one is instructing them.
+                claimVideoPlayback(playerRef.current);
+                stopNarration();
                 startPolling();
               } else if (e.data === state.PAUSED || e.data === state.ENDED) {
                 stopPolling();
@@ -97,6 +130,7 @@ export default function YouTubePlayer({ videoId, onProgress, autoplay = true }) 
     return () => {
       cancelled = true;
       stopPolling();
+      releaseVideoPlayback(playerRef.current);
       const p = playerRef.current;
       if (p && typeof p.destroy === 'function') {
         try { p.destroy(); } catch { /* player already gone */ }

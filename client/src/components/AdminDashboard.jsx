@@ -8,6 +8,7 @@ import { ShieldCheck, Users, LogOut, Loader2, ChevronLeft, CheckCircle2, Clock, 
 import Avatar from './Avatar.jsx';
 import DashboardShell from './DashboardShell.jsx';
 import AdminSettings from './AdminSettings.jsx';
+import AdminMentorConfig from './AdminMentorConfig.jsx';
 import PyqAdminPanel from './PyqAdminPanel.jsx';
 
 // Phase 6: read-only admin console for STUDENT DATA. Reuses the admin endpoints
@@ -156,7 +157,14 @@ export default function AdminDashboard() {
   return (
     <DashboardShell brand={railBrand} nav={nav} activeKey={section} onNav={setSection} footer={railFooter}>
       {section === 'settings' ? (
-        <AdminSettings />
+        <>
+          <AdminSettings />
+          {/* Feature 27: product configuration, deliberately not inside the credential
+              form above — that one is gated on the security code because it changes who
+              can log in. Typing a security code to change a grade is friction with no
+              security value. */}
+          <AdminMentorConfig />
+        </>
       ) : section === 'papers' ? (
         <PyqAdminPanel />
       ) : (

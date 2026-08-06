@@ -4,6 +4,7 @@ import { stopNarration } from './utils/narrationController.js';
 import { courses } from './data/courses.js';
 import { LanguageProvider } from './context/LanguageContext.jsx';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import { MentorProvider } from './context/MentorContext.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import { scrollToTop } from './utils/scrollToTop.js';
 import Header from './components/Header.jsx';
@@ -23,6 +24,7 @@ import ProfilePage from './pages/ProfilePage.jsx';
 import MentorPage from './pages/MentorPage.jsx';
 import Onboarding from './components/Onboarding.jsx';
 import ProfileOnboarding from './pages/ProfileOnboarding.jsx';
+import MentorOffer from './components/MentorOffer.jsx';
 import RoadmapDashboard from './components/RoadmapDashboard.jsx';
 import ParentDashboard from './components/ParentDashboard.jsx';
 import AdminLoginPage from './pages/AdminLoginPage.jsx';
@@ -30,6 +32,7 @@ import AdminDashboard from './components/AdminDashboard.jsx';
 import DiagnosticReview from './pages/DiagnosticReview.jsx';
 import DayDetail from './pages/DayDetail.jsx';
 import ChatWidget from './components/ChatWidget.jsx';
+import MentorHighlightRing from './components/MentorHighlightRing.jsx';
 
 // Home Component with landing page sections
 function Home() {
@@ -159,10 +162,14 @@ export default function App() {
   return (
     <LanguageProvider>
       <AuthProvider>
+        <MentorProvider>
         <BrowserRouter>
           <ScrollToTop />
           <NarrationStopper />
           <ChatWidget />
+          {/* Feature 27: THE ring. One instance, app-wide — see utils/mentorHighlight.js
+              for why per-component rings produced four separate-looking bugs. */}
+          <MentorHighlightRing />
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/courses" element={<Home />} />
@@ -179,6 +186,20 @@ export default function App() {
                 redirected here forever. No PageShell: the flow renders its own
                 header, including the language toggle, because this is the one screen
                 a student cannot skip past to find the toggle later. */}
+            {/* Feature 27: the Voice Mentor offer. Sits AHEAD of the profile flow in
+                ProtectedRoute's gate, because a child who cannot read must not have to
+                complete the written onboarding before being offered the thing that
+                would have read it to them. No PageShell: the screen is two enormous
+                buttons and an avatar, and site chrome is noise a pre-reader must parse
+                past to reach them. */}
+            <Route
+              path="/onboarding/mentor"
+              element={
+                <ProtectedRoute>
+                  <MentorOffer />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/onboarding/profile"
               element={
@@ -245,6 +266,7 @@ export default function App() {
             />
           </Routes>
         </BrowserRouter>
+        </MentorProvider>
       </AuthProvider>
     </LanguageProvider>
   );

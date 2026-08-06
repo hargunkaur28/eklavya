@@ -12,6 +12,8 @@ import { primeAudio } from '../utils/audioPriming.js';
 import { SUBJECTS as SUBJECTLIST, GRADES as GRADELIST, hasSubSubjects, subSubjectsFor } from '../data/taxonomy.js';
 import { getSubSubjectName } from '../utils/subjectTranslations.js';
 import { translations } from '../data/translations.js';
+import MentorCoursePicker from './MentorCoursePicker.jsx';
+import MentorGuide from './MentorGuide.jsx';
 
 // Workstream A4: the diagnostic is ADAPTIVE and variable-length. The client no
 // longer knows how many questions are coming, so it must never render a total.
@@ -187,6 +189,24 @@ export default function Onboarding() {
     ? (currentHindiQ?.questionText || currentHindiQ?.question)
     : (currentQ?.questionText || currentQ?.question || '');
   const displayOptions = (language === 'hi' && currentHindiQ?.options?.length === 4) ? currentHindiQ.options : currentQ?.options;
+
+  // ── A3: the ACTUAL language of the text we are about to send ──────────────
+  //
+  // The server used to infer this from the site-language toggle, and the toggle is a
+  // PROXY for "what language is this text in" — a proxy that is wrong precisely when it
+  // matters. A student on the Hindi toggle whose question has no cached Hindi is shown
+  // ENGLISH text (the ternary directly above chooses it), so the server concluded the
+  // text was already Hindi, skipped translation, and narrated English words. Per
+  // question, exactly tracking which ones had cached Hindi — which is why some questions
+  // spoke Hindi and some spoke English in the same sitting.
+  //
+  // The client does not need to infer anything: it JUST CHOSE between the two, one line
+  // up. So it reports what it chose. Assert the thing, not a proxy for it (Design
+  // Rule 11).
+  const sourceLang = (displayStem && displayStem === (currentHindiQ?.questionText || currentHindiQ?.question))
+    ? 'hi'
+    : 'en';
+
   const isWritten = currentQ?.type === 'written';
   const currentAnswered = isWritten
     ? isWrittenAnswered(answers[currentQIndex])
@@ -280,6 +300,24 @@ export default function Onboarding() {
               </div>
             )}
 
+            {/* Feature 27. Speaks the grade and subject questions and fills them from
+                a spoken answer. The chips above are untouched and remain the way
+                through — voice never becomes the only way to answer anything. */}
+            {/* Guide them to the button that starts the test. Fires once the
+                subject is chosen, so it does not talk over the picker. */}
+            <MentorGuide
+              line="guide.startDiagnostic"
+              highlight='[data-mentor="start-diagnostic"]'
+              when={!!selectedGrade && !!selectedSubject && !needsSubSubject}
+            />
+
+            <MentorCoursePicker
+              grade={selectedGrade}
+              subject={selectedSubject}
+              onGrade={(g) => setSelectedGrade(g)}
+              onSubject={(sub) => { setSelectedSubject(sub); setSelectedSubSubject(''); }}
+            />
+
             <label className="practice-written-toggle" style={{ marginTop: '1.5rem' }}>
               <input
                 type="checkbox"
@@ -301,6 +339,7 @@ export default function Onboarding() {
             <button
               type="button"
               className="primary-button large onboarding-next-btn"
+              data-mentor="start-diagnostic"
               onClick={handleStartQuiz}
               disabled={loadingQuiz || !subSubjectReady}
             >
@@ -323,6 +362,7 @@ export default function Onboarding() {
             <div className="adaptive-round-loading">
               <Loader2 className="animate-spin" size={30} />
               <p>{t.nextRoundLoading}</p>
+            <MentorGuide line="guide.pickingQuestions" when={true} />
               <small>{t.adaptiveNote}</small>
             </div>
           </div>
@@ -394,8 +434,17 @@ export default function Onboarding() {
               <h3 className="quiz-question-title" style={{ margin: 0 }}>{displayStem}</h3>
               <SpeakerButton
                 key={`speaker-diag-${currentQIndex}`}
-                fetchPayload={{ questionText: displayStem, options: displayOptions, language, diagramAlt }}
-                subject={selectedSubject?.name || selectedSubject?.id || ''}
+                fetchPayload={{ questionText: displayStem, options: displayOptions, language, sourceLang, diagramAlt }}
+                // `selectedSubject` is a PLAIN STRING ('Maths'), set from SUBJECTLIST.
+                // This read used to be `selectedSubject?.name || selectedSubject?.id`,
+                // so both were `undefined` and the subject reached `resolveNarrationLang`
+                // as '' — on this ONE call site, while every other passes a real value.
+                //
+                // The consequence was not "the exemption never fired". It fired
+                // everywhere else, so an English-subject question narrated in HINDI here
+                // and in ENGLISH on the review screen: two surfaces disagreeing about
+                // identical content, with neither obviously wrong.
+                subject={selectedSubject || ''}
                 autoPlay={!!user?.autoNarrateQuizzes}
                 size={16}
               />
@@ -428,6 +477,17 @@ export default function Onboarding() {
               </div>
             )}
 
+            {/* B: ANSWERING IS NOT SUBMITTING. A child who cannot read the button
+                believes choosing an option finished the question, and then waits.
+                `replayKey` is the question index, so the instruction is repeated for
+                each new question rather than being said once and forgotten. */}
+            <MentorGuide
+              line="guide.pressContinue"
+              highlight='[data-mentor="quiz-advance"]'
+              when={!!currentAnswered}
+              replayKey={currentQIndex}
+            />
+
             <div className="quiz-nav-row">
               {/* Previous is bounded by the current round: earlier rounds are
                   already graded server-side and cannot be changed. */}
@@ -445,6 +505,7 @@ export default function Onboarding() {
                   type="button"
                   className="primary-button"
                   disabled={!currentAnswered || submitting}
+                  data-mentor="quiz-advance"
                   onClick={() => { primeAudio(); setCurrentQIndex(currentQIndex + 1); }}
                 >
                   {t.next}
@@ -454,6 +515,7 @@ export default function Onboarding() {
                   type="button"
                   className="primary-button"
                   disabled={!currentAnswered || submitting}
+                  data-mentor="quiz-advance"
                   onClick={handleSubmitRound}
                 >
                   {submitting ? (

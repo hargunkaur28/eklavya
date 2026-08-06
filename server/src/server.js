@@ -17,6 +17,7 @@ import activityRoutes from './routes/activity.js';
 import chatRoutes from './routes/chat.js';
 import adminRoutes from './routes/admin.js';
 import mentorRoutes from './routes/mentor.js';
+import mentorVoiceRoutes from './routes/mentorVoice.js';
 import notesRoutes from './routes/notes.js';
 import myNotesRoutes from './routes/myNotes.js';
 import pyqRoutes from './routes/pyq.js';
@@ -125,6 +126,11 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/admin', adminRoutes);
 // Track 1: Mentor — persistent AI tutor chat (student-only; enforced in the router).
 app.use('/api/mentor', mentorRoutes);
+// Feature 27: Voice Mentor — a SEPARATE router from /api/mentor above, which is the
+// text chat. Different audience (children who cannot read), different data (fixed
+// cached lines, not generated replies), and no model call anywhere in it. Behind the
+// parent gate like every other student data router.
+app.use('/api/mentor-voice', parentPasswordChangeGate, mentorVoiceRoutes);
 // Track 2: PDF Notes generator (student-only; ephemeral — no persistence).
 app.use('/api/notes', notesRoutes);
 // Workstream C: My Notes — student-authored pages. A SEPARATE router from

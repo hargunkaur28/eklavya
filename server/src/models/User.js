@@ -46,6 +46,48 @@ const userSchema = new mongoose.Schema({
   // login, so setting Hindi on one device shows Hindi on the next.
   siteLanguage: { type: String, enum: ['en', 'hi'], default: 'en' },
 
+  // ── Feature 27: Voice Mentor ────────────────────────────────────────────
+  //
+  // THESE FOUR FIELDS ARE THE ONLY NEW PERSISTED STATE IN THE WHOLE FEATURE, and that
+  // is a deliberate constraint rather than a happy accident.
+  //
+  // The mentor knows what the child has been doing — which roadmap, which day, whether
+  // the videos are watched and the quiz passed, what practice they have done. NONE of
+  // that is stored here. It is assembled per request from the models that already own
+  // it (utils/mentorContext.js reads Roadmap, PracticeSession, Note and studyDates).
+  //
+  // The reason is that a second record of "where the child was" is a state that CAN
+  // DISAGREE with the roadmap, and the roadmap is authoritative about its own progress.
+  // When the two disagree the mentor does not fail visibly — it speaks with complete
+  // confidence, telling a child to open a day they finished last week or to take a quiz
+  // they already passed. A child who cannot read the screen has no way to notice the
+  // mentor is wrong and no way to say so. So there is nothing to disagree with: the
+  // only things kept here are the ones with no existing home.
+  mentorVoice: {
+    // Whether the post-signup offer has been MADE. Distinct from `enabled: false`,
+    // which means the offer was made and declined — the same distinction Design Rule 3
+    // draws between "deliberately not sampled" and "sampled and failed". Collapsing
+    // them re-offers the mentor forever to a child who already said no.
+    offered: { type: Boolean, default: false },
+    enabled: { type: Boolean, default: false },
+    // SEPARATE from `narrationLanguagePref`, not a duplicate of it. That field carries
+    // an English-subject exemption: set to 'hindi' it still narrates English-subject
+    // content in English, which is right for a Class 10 student reading a passage and
+    // wrong for a five-year-old who can read neither language. A mentor set to Hindi
+    // speaks Hindi always. Different semantics, different field.
+    //
+    // On the child's FIRST choice the mentor language also writes through to
+    // `narrationLanguagePref` — but only when `hasSeenNarrationPrompt` is still false,
+    // so an existing explicit preference is never overwritten and the child is not
+    // asked the same question twice in two different flows.
+    language: { type: String, enum: ['hi', 'en'], default: 'hi' },
+    // Fires once on first arrival at the dashboard, like `hasSeenNarrationPrompt`. One
+    // flag rather than one per form factor: the tour is replayable from an
+    // always-visible control on the mentor avatar, so a child who first arrives on a
+    // phone and later opens a laptop is one tap from the desktop version.
+    tourSeen: { type: Boolean, default: false }
+  },
+
   // ── Workstream B: student profile onboarding ─────────────────────────────
   // Additive, same pattern as `role`/`photoUrl`: every field has a safe default,
   // so an account created before this change loads and logs in unchanged. Existing

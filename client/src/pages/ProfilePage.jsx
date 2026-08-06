@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { User, Mail, Lock, Save, Loader2, ShieldAlert, KeyRound, Camera, Trash2, Volume2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useMentor } from '../context/MentorContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import Avatar from '../components/Avatar.jsx';
@@ -13,6 +14,7 @@ import ProfileDetailsSection from '../components/ProfileDetailsSection.jsx';
 // verification — there is no email-verification system).
 export default function ProfilePage() {
   const { user, updateProfile, updatePreferences, uploadProfilePhoto, removeProfilePhoto } = useAuth();
+  const mentor = useMentor();
   const { t } = useLanguage();
   const navigate = useNavigate();
 
@@ -272,6 +274,52 @@ export default function ProfilePage() {
                 <small>{t('auth.autoNarrateHint')}</small>
               </span>
             </label>
+
+            {/* ── Feature 27: the off switch ──────────────────────────────────
+                Sits BESIDE the narration preferences rather than in a section of
+                its own, because to a student these are one subject: what the app
+                says out loud. Rendered only when the server says this account is
+                eligible — an ineligible student is not shown a switch for
+                something they cannot have.
+
+                TURNING IT OFF NEVER BLOCKS ANYTHING. Every flow the mentor
+                narrates is completable in silence; it is an accompaniment, never
+                a step. */}
+            {mentor?.available && (
+              <>
+                <label className="narration-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!!mentor.enabled}
+                    onChange={(e) => mentor.savePrefs({ enabled: e.target.checked, offered: true })}
+                  />
+                  <span>
+                    <strong>{t('voiceMentor.settingsEnable')}</strong>
+                    <small>{t('voiceMentor.settingsSub')}</small>
+                  </span>
+                </label>
+
+                {mentor.enabled && (
+                  <div className="narration-field">
+                    <span className="narration-field-label">{t('voiceMentor.settingsLanguage')}</span>
+                    <div className="narration-radio-group">
+                      {[['hi', t('voiceMentor.langHindi')], ['en', t('voiceMentor.langEnglish')]].map(([code, label]) => (
+                        <label key={code} className={`narration-radio ${mentor.language === code ? 'selected' : ''}`}>
+                          <input
+                            type="radio"
+                            name="mentorLanguage"
+                            value={code}
+                            checked={mentor.language === code}
+                            onChange={() => mentor.savePrefs({ language: code })}
+                          />
+                          <span className="narration-radio-body"><strong>{label}</strong></span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

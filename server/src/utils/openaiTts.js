@@ -5,6 +5,7 @@
 // Returns a WAV Buffer in the SAME shape `synthesizeSpeech` produces, so downstream
 // (combineWavBase64 chunk-stitching, disk caching) doesn't care which provider made it.
 import { splitTextIntoChunks, combineWavBase64 } from './textToSpeech.js';
+import { classifyProviderError } from './providerError.js';
 
 const OPENAI_TTS_URL = 'https://api.openai.com/v1/audio/speech';
 // gpt-4o-mini-tts accepts up to 4096 input chars; stay well under and stitch.
@@ -39,7 +40,41 @@ export async function synthesizeSpeechOpenAI(text) {
           })
         });
         if (!res.ok) {
-          console.warn(`OpenAI TTS chunk ${idx} failed with status ${res.status}`);
+          // ── READ THE PROVIDER'S ERROR BODY. Design Rule 2. ──
+          //
+          // The status alone is not a diagnosis. HTTP 429 from this provider means two
+          // OPPOSITE things and the correct response to each is the opposite of the
+          // other:
+          //
+          //   type: 'rate_limit_exceeded'  -> RETRYABLE. Slow down and try again.
+          //   type: 'insufficient_quota'   -> TERMINAL.  The key has no credits; no
+          //                                   amount of patience will ever help.
+          //
+          // Logging only `res.status` collapsed them, and the collapse was not free: a
+          // 92-call cache-warming run was attempted against a key with a zero balance,
+          // reported 92 identical "failed with status 429" lines, and looked exactly
+          // like a run worth retrying. It could never have succeeded. One call reading
+          // this body would have said so before the first ninety-two.
+          //
+          // This is the same defect as the diagram retry (Design Rule 2), one layer
+          // down: a caller that discards a provider's error body cannot tell a terminal
+          // state from a retryable one, and treats them identically in whichever
+          // direction the code happens to lean.
+          //
+          // ONLY THE RESPONSE IS LOGGED, never the request. The input to this function
+          // is user-facing content and, in the mentor's case, a sentence a child was
+          // about to hear — it has no business in a log stream. That is the same rule
+          // as "req.body is never logged" (CI invariant 5).
+          // Classification lives in ONE place (utils/providerError.js). It was written
+          // inline here first; by the time `groqClient` and `translateAndCache` needed
+          // the same call there would have been three copies of a judgement that must
+          // not disagree, which is exactly the shape `sourceScan.js` exists to prevent.
+          const err = await classifyProviderError(res, `OpenAI TTS chunk ${idx}`);
+          if (err.terminal) {
+            console.error(`${err.summary} — TERMINAL (this will not clear on its own).`);
+          } else {
+            console.warn(err.summary);
+          }
           return null;
         }
         const arrayBuf = await res.arrayBuffer();

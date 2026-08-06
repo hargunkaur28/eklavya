@@ -134,7 +134,7 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
   };
 
   return (
-    <aside className="dashboard-sidebar pill-sidebar" aria-label={t.navMenuLabel}>
+    <aside className="dashboard-sidebar pill-sidebar" aria-label={t.navMenuLabel} data-tour="nav">
       <ul className="pill-list" role="menubar">
         {visible.map((item, i) => (
           <li key={item.key} role="none">
@@ -164,6 +164,7 @@ export default function DashboardSidebar({ activeSection, onSelect, t, ease = 'p
               type="button"
               role="menuitem"
               className={`pill pill-more ${overflowActive ? 'is-active' : ''}`}
+              data-tour="nav-more"
               onClick={() => setMoreOpen((o) => !o)}
               aria-expanded={moreOpen}
               aria-haspopup="menu"

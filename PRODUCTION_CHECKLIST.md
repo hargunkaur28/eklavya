@@ -1,3 +1,421 @@
+## Working practice — verification costs money, so verify ONCE
+
+This is a rule about how work is done in this repo, not about what ships. It exists
+because the credits were being burned by **re-confirming things already confirmed**,
+not by product usage. Several suites make live model calls — `test:diagrams`,
+`test:subject`, `test:hindi`, `test:glossary`, `test:pyq` under `PYQ_LIVE_PARSE`, and
+any acceptance run that touches TTS/STT — and running one of those to check a change
+that could not possibly have affected it is a payment for no information.
+
+1. **Implement the whole task, then verify once at the end.** Not per file, not per
+   sub-step, not "let me just check this still works".
+2. **Prefer free checks during implementation:** build, lint, reading the code, and
+   the suites that make no network calls — `test:invariants`, `test:units`,
+   `test:reorder`, `test:notes`. These are free and can be run as often as useful.
+3. **Live-key suites run once, at the end, and only the ones the change can affect.**
+   `npm run test:server` is not a reflex. Name the suites and say why each is relevant
+   before running anything.
+4. **If a run fails, finish the whole diagnosis before re-running.** No
+   change-one-line-and-re-run loops against a paid endpoint. Read the output, form the
+   complete explanation, fix all of it, then run again.
+5. **Never re-run a suite to confirm a result you already have.** Unless something
+   changed since it ran, a passing suite re-run costs money and proves nothing.
+6. **State the cost before a paid run:** which suite, roughly how many model calls, and
+   why it is needed now. More than a handful — ask first.
+7. **Voice work develops against fixtures.** Cached/fixture audio and a stub transcript
+   wherever the code path allows it; live STT/TTS only in the final verification pass.
+
+The counterpart rule on the product side is that **the mentor's own speech is cached by
+content hash and never re-synthesised** (Feature 27). The two are the same principle in
+two places: a paid call for an answer already known is a defect, whether the caller is a
+test harness or a feature.
+
+---
+
+### A check needs a check that it LOOKED AT SOMETHING
+
+General practice, not a note about one file. Design Rule 11 says a harness that
+observes the system from outside its actual mechanism passes regardless of behaviour.
+This is its corollary, and it is the failure mode that is *harder* to see: a check
+that is wired up correctly, is genuinely capable of failing, and simply never reaches
+any input at all.
+
+It was demonstrated the day it was written. CI invariant 18 (microphone audio has no
+write path) read `f.code` from a file record whose property is actually named `f.src`.
+The `undefined` failed the guard clause, every file was skipped, and the invariant
+examined **zero bytes** — while printing PASS. The check was correct. The twenty-three
+planted violations that should have tripped it were correct. Both ran against nothing,
+and the result was green and worthless.
+
+What surfaced it was a single line asserting that at least one audio-upload route had
+actually been found. Nothing else could have: the taint logic, the negative controls
+and every planted violation were all downstream of a selector that matched no files.
+
+So, for any check that SELECTS a subset before examining it:
+
+- [ ] **Assert the subset is non-empty**, and fail if it is not. Zero matches is a
+      broken selector far more often than it is a clean codebase.
+- [ ] **Print the count on SUCCESS**, not only on failure. A pass that names how many
+      things it looked at is falsifiable at a glance; a bare PASS is a claim with no
+      evidence attached to it.
+- [ ] **Ask what would make the selector stop matching** — a renamed field, a moved
+      file, a refactor into a helper — and either widen it or assert against it.
+      Invariant 18b matches five plausible multer field names rather than the one that
+      exists today, because renaming the field must not silently disable the check.
+
+The counts in the invariant output are there for exactly this reason. If either number
+ever goes to zero the line still reads PASS, and the number is the only thing that says
+otherwise.
+
+---
+
+### Provider error bodies — survey of every outbound call site (SURVEYED, NOT FIXED)
+
+Design Rule 2, generalised: *a caller that discards a provider's error body cannot
+distinguish a terminal state from a retryable one, and will treat them identically, in
+whichever direction the code happens to lean.*
+
+`openaiTts.js` was fixed as part of Feature 27 because it was the one that cost a
+92-call run. Everything below is **reported and deliberately not changed** — each is a
+live path, several are on the hot path for narration and translation, and changing six
+error handlers at once is how a fix becomes a regression. Ranked by what the silence
+actually costs.
+
+**1. `textToSpeech.js:214` — logs NOTHING AT ALL.** The Sarvam TTS chunk path is
+`if (!response.ok) return null;`. No status, no body, no warning. This is the second
+link of the TTS chain, so during the failed warm run its ninety-two failures were
+**completely invisible** — only the aggregate "Secondary Sarvam TTS incomplete/failed"
+line appeared, which says a chunk failed but not one word about why. Strictly worse
+than a bare status: there is nothing to grep for.
+- [ ] Log status + body, like `openaiTts.js` now does.
+
+**2. `groqClient.js:63` — `RETRYABLE = new Set([408, 409, 429, 500, 502, 503, 504])`.**
+Every 429 is treated as retryable, so an exhausted key is patiently retried with
+exponential backoff forever. This is the *safer* of the two leans — a retryable state
+wrongly called terminal loses content, which Rule 2 was originally written about — but
+it is still a decision made by not looking. Note this file DOES read the body on one
+path (`response.text()` at line 167, the OpenAI final fallback), so the capability is
+already there and simply is not used for the retry decision.
+- [ ] Split 429 on `type`/`code` before deciding to retry.
+
+**3. `translateAndCache.js:216` — the defect written out loud.** The log line reads:
+`Sarvam API returned HTTP ${response.status} (likely out of credits or rate limited)`.
+It names BOTH possibilities in the message because the code cannot tell them apart.
+The parenthetical is an admission, and the answer was in the response body it did not
+read.
+- [ ] Read the body and say which.
+
+**FIXED (Feature 27 follow-up):** `translateAndCache.js` and `groqClient.js` now read
+the body via the shared `utils/providerError.js` classifier, and `openaiTts.js` was
+refactored onto it. A terminal (quota/billing) error now FAILS FAST instead of being
+retried with backoff, and CI invariant 20 asserts the classification. Items 1, 4 and 5
+below remain open and deliberately unfixed.
+
+---
+
+**4. `sarvamClient.js:46, 201, 269` — status only, three sites** (translate, TTS, STT).
+The STT one at 269 is on the mentor's path: a child speaks, transcription fails, and
+the log says `HTTP 429` without distinguishing "too fast" from "no credits".
+- [ ] Read the body at all three.
+
+**5. `fetchYoutubeResources.js:17` and `reverseGeocode.js:88` — status only.** Lowest
+stakes: both already degrade gracefully by design (no videos; manual area entry), and
+neither is retried in a loop. Worth doing for consistency, not urgency.
+
+**Already correct, for reference:** `sendEmail.js:38` reads `response.text()` and logs
+it beside the status. That is the shape the others should take.
+
+**When fixing any of these: log the RESPONSE only, never the request.** Provider inputs
+are user content — a translated question, a child's spoken sentence — and CI invariant
+5 (`req.body` is never logged) exists for exactly this reason one layer up.
+
+---
+
+### YouTube for primary grades — OPEN OBSERVATIONS (gathering a pattern, not tuning)
+
+Finding D fixed the two structural defects: the preferred-channel list was
+secondary-and-above only (Physics Wallah, Unacademy, Aakash — JEE/NEET coaching brands,
+with no primary channel in it at all), and selection was winner-take-all, so ONE
+coaching match eliminated every better result. Channels are now grade-banded, preference
+is a SCORE rather than a filter, results are deduplicated, and Shorts are excluded for
+primary by duration.
+
+Live results after the change (Class 1 / Class 2 Maths) are broadly right — Periwinkle,
+Singing Walrus, Pebbles Kids Learning, Numberock. Two results are NOT, and they are
+recorded here **verbatim and unfixed** rather than being tuned away:
+
+1. **`[The Learning Hub] Learn Place Values in Indian Number System | Ones, Tens,**
+   **Hundreds to Crores | kids`** — Class 1 search. Says "kids", is titled for kids, and
+   crores is roughly Class 5+.
+2. **`[PD Classes] Kvs #Maths Demo video | Mathematics Number system | #Teacher Demo`**
+   **`class`** — Class 1 search. Right topic, wrong AUDIENCE: this is a teacher-training
+   / interview-demo video, not a lesson for a child.
+
+**Why these are not being fixed yet.** Adding "crore" to the advanced-terms list would be
+tuning a heuristic against a single observation, and Design Rule 17 is exactly about that
+trap: three of four checking out is the trap, not the reassurance. One wrong result is not
+yet evidence of WHICH KIND of problem this is — a vocabulary gap, an audience-detection
+gap, or a signal that YouTube relevance for Class 1–2 is simply too poor for any filter.
+Those three have different fixes and only one of them is a keyword list.
+
+Note that observation 2 is a DIFFERENT class from observation 1: over-scoped content
+versus wrong-audience content. That is the beginning of a pattern rather than a repeat.
+
+- [ ] **Record further instances here with their actual titles.** At three or four,
+      decide between a curated per-grade allow-list (a CONTENT task, not a code one) and
+      a second structural filter. Do not decide on one video.
+
+**What protects a child in the meantime:** the mentor guides them TO the videos on the
+day page; it does not vouch for each one. And the day is no longer uncompletable when the
+video list is empty, so a stricter future filter cannot create a dead end.
+
+---
+
+### `test:diagnostic` is 24/26 — a PRE-EXISTING round-2 defect, not the question-cap band
+
+Recorded so this does not quietly become "the suite has always been 24/26".
+
+**The two failures are ONE event.** Reproduced with statuses on 6 August 2026:
+
+```
+generate: 200 round 1        no-answers: 400   no-round: 400   unknown: 410
+SUBMIT 1 : 201  status=complete      <- expected 200 status=continue
+SUBMIT 2 : 410  session expired      <- expected 409 stale-round
+```
+
+The diagnostic ENDS after round 1 instead of continuing, so the replay correctly reports
+the session gone (410) rather than a stale round (409). One cause, two red lines.
+
+**It is NOT the C1 question-cap band.** Class 10 — which is what this suite runs — has a
+byte-identical budget either side of that change: cap 20 -> 20, probe chapters 9 -> 9.
+The suite prints its own confirmation (`probe set is a spread ... 9 chapters spanning
+first..last`). The band only alters Class 5 and below.
+
+Two candidate causes, neither investigated:
+- the suite answers EVERY question `selectedIndex: 0`, so every touched chapter resolves
+  weak immediately, and the stop rule may be terminating earlier than `mcqMin` implies;
+- round-2 generation degrading (Groq is the only live provider) and the route completing
+  the session rather than serving an empty round.
+
+- [ ] **Diagnose the round-2 early-complete.** Start by asserting `shouldStop` cannot
+      return true below `mcqMin` — that is a pure function and free to test.
+
+---
+
+### BLOCKER: the mentor audio cache is EMPTY — OpenAI credits exhausted (TERMINAL)
+
+The warm run was attempted on 6 August 2026 and produced **0 synthesised, 92
+skipped**. Nothing was billed: every request was rejected, not served.
+
+**It is terminal, not retryable, and the distinction was worth one call to establish.**
+The provider returns HTTP 429 for two completely different situations, and
+`openaiTts.js` logs only `res.status`, discarding the body that tells them apart —
+which is Design Rule 2 in a new place (`MODEL_DECLINED` is terminal, a timeout is not;
+collapsing them made a 429 permanent). One diagnostic call returned:
+
+```json
+{ "error": {
+    "message": "You have no credits remaining. Add credits to continue using the API",
+    "type": "insufficient_quota",
+    "code": "credit_balance_exhausted" } }
+```
+
+`insufficient_quota`, not `rate_limit_exceeded`. No pacing, backoff or retry changes
+it. Sarvam fails behind it too — its free tier was already recorded as exhausted
+during dev testing — so the whole TTS chain is down, not just its first link.
+
+**SECOND ATTEMPT, 6 August 2026 — still 0, and the script has grown.** The cache warm was
+retried after the guidance work took the script from 46 to **59 lines (118 clips)**. Result
+was again **0 synthesised, 118 skipped**, nothing billed. Both providers are hard out:
+
+```
+OpenAI  429  type=insufficient_quota  code=credit_balance_exhausted
+             "You have no credits remaining."
+Sarvam  402  code=insufficient_quota_error
+             "No credits available."
+```
+
+**Check WHICH ORG/PROJECT the key belongs to before topping up again.** The key is an
+`sk-proj-` project key and credits are held per ORGANISATION, so a top-up can land on a
+different org, or the project itself can carry a zero spend limit, and the symptom is
+identical to never having paid. Two runs have now failed this way.
+
+This diagnosis cost ONE call rather than a guess, because `openaiTts.js` now logs the
+error body (Design Rule 2, generalised). Before that change the run produced 92 identical
+"status 429" lines and read as worth retrying.
+
+- [ ] **Add OpenAI credits, then run `npm run warm:mentor-audio -- --apply` ONCE.**
+      92 calls (46 lines x 2 languages). Dry-run first — it costs nothing and prints
+      the number. Cached lines are skipped on a re-run, so a partial success is not
+      re-paid for.
+- [ ] **Consider surfacing the 429 body in `openaiTts.js`.** Right now a permanently
+      dead key and a momentary rate limit are indistinguishable in the logs, and the
+      correct response to them is opposite: one needs billing, the other needs
+      patience. This cost a full 92-call run that could never have succeeded.
+
+#### What this means for the feature RIGHT NOW
+
+It degrades rather than breaking. `POST /mentor-voice/speak` misses the cache, gets
+`null` from `synthesizeSpeech`, and returns `{useFallback, fallbackText}` — the client
+then speaks the line with the browser's own voice. That is the documented Feature 21
+degradation path and it works.
+
+**But an empty cache makes a pre-existing behaviour newly load-bearing, and it is the
+wrong behaviour for this feature.** `speakViaWebSpeech` in `narrationController.js`
+selects a voice like this:
+
+```js
+u.voice = voices.find((v) => v.lang.startsWith(prefix))   // hi-IN, ideally
+  || voices.find((v) => v.lang.includes('in'))            // any Indian voice
+  || voices[0];                                           // ANY voice at all
+```
+
+That third fallback is defensible for Feature 21, where the alternative is a silent
+quiz for a student who can read the question anyway. It is **wrong for the mentor**:
+a Devanagari sentence read by an `en-IN` or `en-US` voice is noise, and noise is worse
+than silence here because it *sounds like the app working* to a child who cannot read
+the screen to check.
+
+`speakLocal` (added for the mentor's read-back) deliberately refuses that substitution.
+So the two paths now disagree — and with a cold cache, EVERY mentor line goes through
+the substituting one. The disagreement is invisible while the cache is warm, which is
+exactly why it is written down here rather than discovered later.
+
+- [ ] **DECIDE: should `speakViaWebSpeech` stop substituting across languages?**
+      Not changed unilaterally, because it is Feature 21's path and it carries every
+      narration in the app — a quiz that currently speaks would go silent. The options:
+      (a) leave it, and rely on the warm cache making it unreachable for the mentor;
+      (b) add an opt-out flag the mentor passes and quiz narration does not;
+      (c) change it globally, accepting silent quiz narration on voice-less devices.
+      **(b) is the recommendation** — it makes the two paths agree about the mentor
+      without changing what Feature 21 does today.
+
+---
+
+### Feature 27 — the one device sitting, and the four older checks folded into it
+
+Everything else in Feature 27 is verified for free: `test:invariants` (18 + 19),
+`test:audio-proof` (25 planted violations), `test:units` (`test-mentor-voice.mjs`, 46
+checks) and the client build. What is left genuinely cannot be: a real microphone, a
+real permission prompt, a real speech engine, and a real 360px screen.
+
+Do it as ONE sitting. The four checks outstanding from earlier workstreams are folded
+in here rather than left to a second session on the same hardware.
+
+#### The mentor
+- [ ] **The tour, on a phone AND on a desktop.** They are different tours, not one
+      responsive tour. Confirm the mobile run describes the BOTTOM BAR and the "More"
+      sheet, and the desktop run describes the sidebar — and that neither describes
+      the other. Rotate a tablet mid-tour; the description must follow the layout.
+- [ ] **Every tour step highlights something that is actually on screen.** A step whose
+      anchor is missing is skipped rather than spoken; confirm no step narrates an
+      element that is not visible.
+- [ ] **"Show me around" replays it.** Always visible, icon-led, on the avatar — NOT a
+      long-press. A child who cannot read finds a control by seeing it.
+- [ ] **Mute is instant, mid-sentence.** Not "after the current line finishes", which
+      reads as a button that does not work. Muting mid-tour must end the tour rather
+      than leaving the child on a highlighted element in silence.
+- [ ] **The mentor never navigates.** Ask it to study; confirm it highlights the day
+      card and says to tap it, and that the tap is still yours to make.
+
+#### The microphone — TWO DISTINCT PATHS, do not test only one
+- [ ] **Permission DENIED.** Tap "Block" on the browser prompt. This is the likelier
+      case by far — far likelier than a device with no microphone — and it is a
+      DIFFERENT code path from voice-unavailable: it fails at `getUserMedia`, in
+      `useSpeechInput`, before any transcription is attempted. Confirm the mentor says
+      so, the typed input still works, and nothing is left spinning.
+- [ ] **Permission granted, mic works.** The ordinary path. One question, one answer.
+- [ ] **Confirm-and-retype.** Answer a name deliberately unclearly twice. Confirm the
+      hand-off to typing arrives on the SECOND failure and there is no third loop.
+
+#### The no-Hindi-voice branch — THE IMPORTANT ONE
+- [ ] **Find an Android without an `hi-IN` speech voice** (a stock low-end device, or
+      remove the Hindi TTS voice data) and run the profile flow.
+
+      The unit tests can only assert the MACHINE'S SHAPE — that `onUnspoken()` cannot
+      touch the counter. They cannot assert that a real device actually takes that
+      branch, which is a fact about `voiceschanged`, engine timing and the watchdog,
+      none of which exist in Node.
+
+      What must be true: the read-back is SKIPPED, not attempted-and-silent; the cached
+      "have a look, or ask a grown-up" line plays; the value shows enlarged in its
+      field; and BOTH retry attempts remain available afterwards. If two attempts are
+      consumed by silence, the ordering has regressed — that is the exact defect the
+      split between `onNegative()` and `onUnspoken()` exists to prevent.
+- [ ] **Confirm it does not substitute the English voice.** A Devanagari name read by an
+      `en-IN` voice is noise, and noise is worse than an honest sentence because it
+      sounds like the app working.
+
+#### The four checks carried in from earlier workstreams
+- [ ] **360px layout** — the profile flow, the dashboard, and now the mentor controls.
+      Confirm the mentor and the ChatWidget launcher do not overlap (mentor left, chat
+      right) and neither sits under the bottom nav.
+- [ ] **Soft keyboard against a written answer** — the exam timer stays visible and the
+      Finish button stays reachable. Playwright cannot raise a real IME, so this has
+      only ever been verified by proxy at a simulated 360x400 viewport.
+- [ ] **iPhone: the Fullscreen API is absent** — exam mode degrades rather than breaking.
+- [ ] **Escape leaves fullscreen mid-exam** — layout intact, clock unchanged, still in
+      the exam.
+
+---
+
+### Nursery and KG are NOT served — and the fix is content, not a smaller version of Class 5
+
+Nursery and KG appear in the grade picker and cannot be used. This is recorded as its
+own scoped item rather than folded into Feature 27 because **it is not a voice problem
+and the voice feature does not make it better or worse.** Feature 27 scopes to
+Class 1–5 via `mentorMaxGrade`, which is already an admin setting — so when nursery
+content becomes real, the mentor extends to it by changing a value, not by rewriting
+anything.
+
+Do **not** treat any one of the three blockers below as the fix. Clearing only the
+first produces enrolment followed by a 503, which is strictly worse than the current
+state: today the child never gets in, and after that change they get in and then hit a
+wall they cannot read.
+
+**Blocker 1 — the age gate excludes them.** `AGE_MIN = 5` in
+`server/src/utils/validateProfile.js`. Nursery is ages 3–4. `age` is compulsory and
+server-validated (`AGE_OUT_OF_RANGE`), so the grade is offered in the picker and the
+age gate rejects exactly the children who would pick it. Deterministic, not a quality
+issue. **Left untouched deliberately** — see the paragraph above.
+
+**Blocker 2 — the blueprint validator demands a shape a nursery syllabus does not**
+**have.** No `SYLLABUS_BLUEPRINT` entry exists below Class 10 (the table holds seven
+entries: Class 10 Science/Maths/English/Social Science/Hindi, Class 11 JEE, Class 12
+NEET). Everything below falls to `generateBlueprint()`, whose `validateChapters`
+requires **≥4 chapters with ≥2 concepts each**. That is a reasonable shape for Class 5
+and it fights a syllabus whose real content is shapes, colours, and counting to ten.
+Two failed attempts and `resolveBlueprint` throws — an honest 503, correctly, but a
+503 all the same. `GRADE_LEVEL_ANCHORS` *does* carry hand-written Nursery and KG
+anchors, so the level is pinned in the prompt; the chapter SHAPE is the problem.
+
+**Blocker 3 — every downstream artefact assumes a reader.** This is the one that
+matters most and the one most likely to be underestimated:
+- The diagnostic is 8–20 text MCQs with four text options.
+- `callGroqForDayContent` asks for a "comprehensive, clear, 2-3 paragraph educational
+  explanation" and **rejects anything under 200 characters** — a length floor with no
+  reading-level ceiling.
+- `callGroqForModuleQuiz` passes `Grade: "Class 2"` as a bare string, with no
+  difficulty anchor and no exemplars. Only the diagnostic is anchored.
+- The roadmap UI is prose: day cards, topics, focus lines.
+- Feature 21 narration reads **the question stem** aloud. It does not make four
+  written options answerable by a child who cannot read them.
+
+**A nursery roadmap is a DIFFERENT ARTEFACT, not a smaller one.** This is the whole
+reason the item is parked rather than estimated. Shortening the lesson, lowering the
+question count and simplifying the words produces a worse Class 5 course, not a
+nursery course. A nursery "day" plausibly has no prose lesson, no four-option MCQ and
+no written answer at all — it is picture-matching, counting, letter sounds, spoken
+response. Which of those it actually is, is a product decision.
+
+- [ ] **DECIDE WHAT A NURSERY DAY CONTAINS before any code is written.** Not the
+      generator, not the age gate, not the picker — the artefact. Every one of the
+      three blockers above is cheap to clear once that answer exists and unclearable
+      until it does, because each of them is currently enforcing the shape of a
+      reading-age course.
+
+---
+
 ## Pre-Production Checklist / Flagged for Later
 
 ### External Paid API & Cost Inventory
@@ -2069,9 +2487,17 @@ The part worth recording: `--replace` deletes the existing paper *before* it par
 mid-run provider failure loses the previous parse with nothing to fall back to. Physics
 had 42 usable rows before this run and has none now. It is hard-blocked from publication
 by `PAPER_HAS_NO_QUESTIONS`, which is correct, but the data loss was avoidable.
-- [ ] **Make `--replace` parse first and swap last.** Delete the old rows only once the
-      new parse has succeeded. A destructive flag should not widen its blast radius when
-      the provider is down.
+- [x] **DONE — `--replace` now parses first and swaps last.** The old paper is deleted
+      only once the new parse has produced questions; a failure rolls the new attempt
+      back and leaves the previous paper untouched.
+
+      The first version of this fix was WRONG and testing caught it: there is a unique
+      index on `{board, grade, subject, year, title}`, so the old and new papers cannot
+      both hold the title during the parse — it failed E11000 at creation, before
+      reading a page. The new paper now parses under a temporary title carrying an
+      ` — IMPORTING DO NOT USE` suffix, which `isFixtureTitle()` already blocks from
+      publication, and claims the real title only after the old row is gone. A run
+      killed mid-import therefore leaves a row that cannot reach students.
 - [ ] Re-run `scratchpad/reimport-physics.sh` when the rate limit clears. It targets the
       NEW title; the old scripts now error on no-match by design.
 
@@ -2086,3 +2512,111 @@ excludes the word "SAMPLE", so titles carry the distinction; nothing else does.
 - [ ] Decide whether `PastPaper` needs a `paperKind` (`sat-paper` | `sample-paper`) and
       whether the student-facing label should distinguish them. Titles are currently the
       only signal, and a title is not a queryable field.
+
+---
+
+## Deferred — PYQ import pipeline
+
+Recorded here rather than left as intent. Each of these was found by measurement,
+and each states what goes wrong if it stays open, so a later decision to close it
+as out-of-scope is at least an argument rather than an omission.
+
+### PYQ-1 — "answer any N of M" has no representation
+`partsRelation` offers `all-required | choose-one | unclear`. A paper saying
+*"Complete any ten of twelve"* folds to `choose-one`, so the family is worth
+`max()` of its members rather than ten members' marks. This is the entirety of
+English's 33 units against a stated 11, and the single largest source of wrong
+totals in the corpus. Needs a `chooseN` relation carrying N, or an explicit
+decision that such papers are out of scope — recorded as a decision, not left
+to fold silently into `choose-one`.
+
+### PYQ-2 — evidence is never checked against the source text
+`partsRelationEvidence` is stored but never verified to appear in the question's
+own text, so it proves the model *wrote* something, not that it *read* something.
+Measured: **zero `unclear` across 148 rows**, which by Design Rule 19 is a defect
+in the harness rather than a clean parse — uncertainty is being resolved silently.
+The choice-pair half of this (families that never reached the evidence check at
+all) is fixed; the substring check against the page text is not. Deterministic
+and cheap: prefer this gate to any judge (Design Rule 15).
+
+### PYQ-3 — `17A` / `17B` are never linked
+Different question numbers, so `foldQuestions()` sees two unrelated questions
+rather than an internal-choice pair. On Social Science this was six pairs — +6
+units, +20 marks — corrected by hand, not by the parser. Check whether this falls
+out of the PYQ-1/PYQ-2 folding changes before scheduling separately.
+
+### PYQ-4 — SQP vs PYQ is not queryable  *(hard blocker on first publication)*
+The entire corpus is CBSE **Sample** Question Papers, and the feature is called
+Previous Year Questions. The distinction lives only in paper titles; nothing
+structural carries it, and the server-side label renders `CBSE 2023 · Q14` for a
+paper the board never sat. That is Design Rule 16 one level down — false evidence
+about the exam, invisible to exactly the student relying on it, and arriving
+through the label built server-side *so that* the client could not construct one.
+Needs `paperKind` on `PastPaper`, required, no default, with the label built from
+it. Cheap now at a dozen papers; expensive later. **Nothing may be published
+until this lands.**
+
+### PYQ-5 — corpus does not reconcile
+No paper reconciles from parser output. Science and Social Science reconcile only
+via manual row fixes; that is two papers repaired, not two passing. Outstanding:
+- HBSE Class 10 Maths — 10 marks against a stated 80. Unusable.
+- Class 12 Maths — 97/80
+- Class 10 English — 89/80  (expected to be mostly PYQ-1)
+- Hindi — 89/80, corrupt text layer, 13 of 25 questions usable. **Not a parser
+  bug** — re-source the PDF or force it down the vision path. Do not tune the
+  parser against it.
+- Physics — 0 questions. Blocked on OpenAI credits (`credit_balance_exhausted`).
+  `reimport-physics.sh` is ready and targets the new title. Import *after* the
+  parser gaps close, or it produces one more paper needing manual repair.
+
+### PYQ-6 — human correction time has never been measured
+All 47 fixture questions sit at `__v: 0`. Not one has ever been edited, so the
+admin review workflow has never had a human in it and every estimate of manual
+repair cost is a guess. This is the number the parser-vs-corpus decision forks on:
+at ten minutes a paper, manual repair scales and the gaps above are a nuisance;
+at two hours it does not, and PYQ-1 is the only path to a usable corpus.
+Measure by repairing HBSE Class 10 Maths through the admin UI and timing it.
+
+---
+
+## Deferred — unverified UI
+
+Built and reasoned about, never run. Treat as unverified rather than done.
+- Mic button; speaker in exam mode; More menu; admin and parent bottom navs;
+  scroll-to-top; scroll-to-result.
+- Four device checks outstanding from earlier: 360px layout, soft keyboard against
+  a written answer, iPhone fullscreen-API absence, Escape leaving fullscreen.
+  One pass on a real phone covers these and the six above together.
+
+### Checked against the live corpus while filing the above (2026-07-31)
+Four notes, three of which change the size of an item rather than its nature.
+
+- **PYQ-6 is larger than it reads.** The text says "all 47 fixture questions sit at
+  `__v: 0`". Corpus-wide it is **535 PyqQuestion rows, 0 ever edited** — not one
+  document in the collection has been through the admin editor. So the missing number
+  is not "we have not timed the fixtures", it is "the review workflow has never been
+  exercised by a human at all". That strengthens the case for doing PYQ-6 FIRST: it is
+  the cheapest item here and every other estimate depends on it.
+
+- **PYQ-4 confirmed exactly, and the backfill is mechanical.** 12 papers, **0 carrying
+  `paperKind`**. Every title already contains the literal string "Sample Question
+  Paper", so the migration is derivable rather than hand-classified — which makes
+  "required, no default" affordable immediately. Do the schema field and the backfill
+  in one change; a nullable `paperKind` would reintroduce the absence-vs-verdict
+  problem this repo has now hit four separate times.
+
+- **`reimport-physics.sh` is not in the repo.** PYQ-5 describes it as ready and
+  targeting the new title; `find` turns up nothing under the project (excluding
+  node_modules). Either it lives outside version control on one machine, or it was
+  never committed. Worth resolving before it is relied on — a script that only exists
+  on one laptop is not a plan, and the Physics import is already gated on credits.
+
+- **The cross-references are live.** Design Rules 15, 16 and 19 all exist in
+  README.md (1–19), so PYQ-2 and PYQ-4 point at real rules rather than dangling.
+
+- **The device pass overlaps an item already open above.** "Workstream B — one
+  physical-device check before launch" asks for the same soft-keyboard test on the
+  profile flow. Do them in ONE session on one phone: profile flow, written-answer
+  keyboard, 360px layout, iPhone fullscreen absence, Escape-to-exit, plus the six
+  unverified controls. Splitting them across two sessions is how one of them quietly
+  never happens.

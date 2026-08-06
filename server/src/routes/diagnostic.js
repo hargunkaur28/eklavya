@@ -7,14 +7,15 @@ import { synthesizeSpeech, saveAudioFile, audioFileExists, generateContentHash }
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
 import { normalizeTopic } from '../utils/weakTopics.js';
-import { subjectScopeLabel, isWrittenHeavy, isKnownSubSubject } from '../config/taxonomy.js';
+import { subjectScopeLabel, isWrittenHeavy, isKnownSubSubject, GRADES } from '../config/taxonomy.js';
 import { formatQuestionForTTS } from '../utils/ttsNormalize.js';
 import {
-  MIN_QUESTIONS, MAX_QUESTIONS,
+  MIN_QUESTIONS, MAX_QUESTIONS, maxQuestionsForGrade,
   resolveBlueprint, selectWorkingChapters, planNextRound, generateRound,
   shouldStop, estimateTotal, chapterAccuracy, coverageOf
 } from '../utils/diagnosticEngine.js';
 import { attachDiagrams } from '../utils/generateDiagram.js';
+import { resolveSpeakPlan, speakLangAfterTranslationFailure } from '../utils/narrationLang.js';
 import { callGroqChat } from '../utils/groqClient.js';
 
 const router = express.Router();
@@ -136,7 +137,10 @@ function progressOf(session) {
     answered: session.gradedCount,
     round: session.roundNumber,
     minQuestions: MIN_QUESTIONS,
-    maxQuestions: MAX_QUESTIONS,
+    // The BAND's ceiling, not the global constant — a Class 2 student must not be
+    // shown "max 20" while their session is capped at 15. Reconstructed from the
+    // session's own budget so it can never disagree with the budget actually in force.
+    maxQuestions: (session.mcqMax || MAX_QUESTIONS) + (session.includeWritten ? DIAGNOSTIC_WRITTEN_COUNT : 0),
     coverage: coverageOf(session.blueprintChapters, session.chapterStats || {}),
     estimatedTotal: estimateTotal({
       chapters: session.blueprintChapters,
@@ -290,7 +294,10 @@ router.post('/generate', authMiddleware, requireRole('student'), async (req, res
     const includeWritten = req.body.includeWritten === true || isWrittenHeavy(subject, subSubject);
     const writtenCount = includeWritten ? DIAGNOSTIC_WRITTEN_COUNT : 0;
     const mcqMin = MIN_QUESTIONS - writtenCount;
-    const mcqMax = MAX_QUESTIONS - writtenCount;
+    // Banded: 15 for Class 5 and below, 20 above. See maxQuestionsForGrade() for why a
+    // global 15 was rejected — the cap doubles as the syllabus-coverage dial.
+    const gradeMax = maxQuestionsForGrade(grade, GRADES);
+    const mcqMax = gradeMax - writtenCount;
 
     let blueprint;
     try {
@@ -872,9 +879,12 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      // Sarvam (+ OpenAI for Hindi) all failed → hand the text to the client so it can
-      // Web-Speak it, rather than erroring with no fallback text.
-      return res.json({ useFallback: true, fallbackText: textToSpeak });
+      // fallbackLang IS REQUIRED, NOT OPTIONAL. The client speaks this text with the
+      // browser voice, and without a language it defaults to the student PREFERENCE —
+      // which is a proxy for "what language is this text in", and wrong exactly when the
+      // text could not be translated. That is the A3 defect (English words in a Hindi
+      // voice) at its third site. Send the language of the TEXT, always.
+      return res.json({ useFallback: true, fallbackText: textToSpeak, fallbackLang: effectiveHindi ? 'hi' : 'en' });
     }
 
     const audioUrl = saveAudioFile(filename, audioBuffer);
@@ -892,7 +902,23 @@ router.get('/:id/question/:questionIndex/audio', authMiddleware, async (req, res
 router.post('/live-audio', authMiddleware, async (req, res) => {
   try {
     const { questionText, options, language } = req.body;
-    const displayedLang = language === 'hi' ? 'hi' : 'en';
+    // ── A3: what language the SUPPLIED TEXT is actually in ───────────────────
+    //
+    // `language` is the site toggle, and using it here was the defect: the toggle says
+    // what the student PREFERS, not what this string IS. A student on the Hindi toggle
+    // whose question has no cached Hindi is shown English text, so the toggle said 'hi'
+    // about an English sentence, translation was skipped as unnecessary, and the
+    // narration spoke English words — on some questions and not others, tracking which
+    // ones happened to have a cached translation.
+    //
+    // `sourceLang` is sent by the client, which KNOWS: it chose between the Hindi and
+    // the English string one line before building this payload.
+    //
+    // Falls back to the toggle when absent, so an older client (or a cached bundle
+    // mid-deploy) behaves exactly as it does today rather than breaking.
+    const displayedLang = (req.body.sourceLang === 'hi' || req.body.sourceLang === 'en')
+      ? req.body.sourceLang
+      : (language === 'hi' ? 'hi' : 'en');
     // Resolved narration language (Phase 2 table, sent by the client). Defaults to
     // the displayed language when absent.
     let narrateLang = (req.body.narrationLang === 'hi' || req.body.narrationLang === 'en')
@@ -912,8 +938,11 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
     // Workstream D: the client sends the figure's alt text so narration describes it.
     let altText = typeof req.body.diagramAlt === 'string' ? req.body.diagramAlt.trim() : '';
 
-    // Translate-on-demand when the narration language differs from the supplied text.
-    if (narrateLang !== displayedLang) {
+    // Translate-on-demand when the narration language differs from the LANGUAGE THE
+    // TEXT IS ACTUALLY IN. The decision is a pure function (utils/narrationLang.js) and
+    // is asserted in CI, because this path is shared by every grade and every subject.
+    const plan = resolveSpeakPlan({ sourceLang: displayedLang, narrationLang: narrateLang });
+    if (plan.needsTranslation) {
       if (narrateLang === 'hi') {
         // en → hi is supported. On failure, degrade to narrating the displayed text
         // (still reaches SOMETHING for the student) and log it.
@@ -928,12 +957,12 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
               if (tAlt && tAlt.trim()) altText = tAlt;
             }
           } else {
-            console.warn('live-audio: en→hi translation failed — narrated in displayed language (en) instead of requested (hi).');
-            narrateLang = displayedLang;
+            console.warn('live-audio: en→hi translation failed — narrating the text in its own language instead of the requested one.');
+            narrateLang = speakLangAfterTranslationFailure(displayedLang);
           }
         } catch (err) {
-          console.warn('live-audio: en→hi translation error — narrated in displayed language (en).', err.message);
-          narrateLang = displayedLang;
+          console.warn('live-audio: en→hi translation error — narrating the text in its own language.', err.message);
+          narrateLang = speakLangAfterTranslationFailure(displayedLang);
         }
       } else {
         // hi → en is NOT supported (translateTextWithSarvam is en→hi only). Known,
@@ -941,8 +970,8 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
         // Hindi. Degrade to the displayed (hi) text and log it EXPLICITLY so it leaves
         // a clear trail (see PRODUCTION_CHECKLIST — this actively differs from the
         // student's stated preference, unlike a plain translate failure).
-        console.warn('live-audio: hi→en translation unsupported for live-audio; narrated in displayed language (hi) instead of requested preference (en).');
-        narrateLang = displayedLang;
+        console.warn('live-audio: hi→en translation unsupported; narrating the Hindi text in a Hindi voice rather than Hindi words in an English voice.');
+        narrateLang = plan.speakLang;
       }
     }
 
@@ -962,8 +991,12 @@ router.post('/live-audio', authMiddleware, async (req, res) => {
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      // Sarvam API out of credits or unavailable -> signal frontend to use Web Speech API fallback
-      return res.json({ useFallback: true, fallbackText: textToSpeak });
+      // fallbackLang IS REQUIRED, NOT OPTIONAL. The client speaks this text with the
+      // browser voice, and without a language it defaults to the student PREFERENCE —
+      // which is a proxy for "what language is this text in", and wrong exactly when the
+      // text could not be translated. That is the A3 defect (English words in a Hindi
+      // voice) at its third site. Send the language of the TEXT, always.
+      return res.json({ useFallback: true, fallbackText: textToSpeak, fallbackLang: isHindi ? 'hi' : 'en' });
     }
 
     const audioUrl = saveAudioFile(filename, audioBuffer, true);

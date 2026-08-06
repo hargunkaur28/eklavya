@@ -19,11 +19,15 @@ import { WrittenReview } from './WrittenQuestion.jsx';
 import MyNotesPanel from './MyNotesPanel.jsx';
 import BoardReselectPrompt from './BoardReselectPrompt.jsx';
 import PyqPanel from './PyqPanel.jsx';
+import VoiceMentor from './VoiceMentor.jsx';
+import MentorGuide from './MentorGuide.jsx';
+import { useMentor } from '../context/MentorContext.jsx';
 
 export default function RoadmapDashboard() {
   const { activeRoadmap, setActiveRoadmap, authFetch, refreshRoadmap, user, roadmaps, selectRoadmap } = useAuth();
   const { language } = useLanguage();
   const navigate = useNavigate();
+  const mentorTourRunning = !!useMentor()?.tourRunning;
 
   const t = translations[language]?.dashboard || translations.en.dashboard;
   const userName = user?.name || (language === 'hi' ? 'छात्र' : 'Student');
@@ -136,11 +140,50 @@ export default function RoadmapDashboard() {
   // Phase 2: video completion is a distinct signal from days completed. OR logic —
   // a day counts if ANY of its videos is watched. Falls back to the legacy scalar
   // `videoWatched` so days not yet migrated still register.
-  const videosWatchedCount = localDays.filter(
-    (d) => (Array.isArray(d?.videoProgress) && d.videoProgress.some((v) => v?.watched)) || d?.videoWatched
-  ).length;
-  const videoPercent = activeRoadmap.totalDays > 0
-    ? Math.round((videosWatchedCount / activeRoadmap.totalDays) * 100)
+  // ── Device pass: "1 of 14 videos watched" after watching THREE videos ──────
+  //
+  // NOT a persistence bug, and worth stating plainly because it looked like one: this
+  // counted DAYS THAT HAVE ANY WATCHED VIDEO, over a denominator of totalDays, and the
+  // label called them videos. Three videos inside one day is one day, so it read "1 of
+  // 14". Feature 8 was storing every video correctly the whole time.
+  //
+  // It also does NOT mean the completion gate ran on bad input — the gate uses
+  // isAnyVideoWatched(day) per day, which is exactly this per-day question and is right.
+  //
+  // Both numbers are now counted over VIDEOS, matching what the label has always said.
+  // ── Third device pass: "6 of 6 videos watched", 100%, with days untouched ──
+  //
+  // Stated precisely, because the previous fix was made without this check:
+  //   NUMERATOR   — videoProgress records with watched:true. Correct: videos actually
+  //                 watched to the 90% threshold.
+  //   DENOMINATOR — was `videoProgress.length`, i.e. videos the child has STARTED. So it
+  //                 could only ever read "N of N": every video they began, they finished.
+  //
+  // The denominator has to come from the day's RESOURCES, not from its progress records.
+  //
+  // ONE HONEST CAVEAT, and it is why this is not simply "all videos in the roadmap":
+  // `resources` are generated LAZILY, on first open of a day. A day never opened has
+  // none, so the roadmap-wide total is genuinely unknowable until every day has been
+  // visited. The denominator therefore counts videos across days whose content EXISTS,
+  // and it grows as the student opens days. That is a real limit, not a rounding choice
+  // — recorded in PRODUCTION_CHECKLIST rather than papered over with a guessed total.
+  const youtubeCountFor = (d) => (Array.isArray(d?.resources) ? d.resources.filter((r) => r?.type === 'youtube').length : 0);
+  const legacyDays = localDays.filter((d) => !(d?.videoProgress || []).length && d?.videoWatched);
+
+  const videosWatchedCount =
+    localDays.flatMap((d) => (Array.isArray(d?.videoProgress) ? d.videoProgress : [])).filter((v) => v?.watched).length
+    // Legacy days tracked a single scalar before per-video progress existed; count one
+    // for them so a migrated account does not read as having watched nothing.
+    + legacyDays.length;
+
+  const videosTotalCount = Math.max(
+    localDays.reduce((n, d) => n + youtubeCountFor(d), 0) + legacyDays.length,
+    // Never let the total sit below the count of videos actually watched — a day whose
+    // resources were regenerated shorter would otherwise read as "4 of 3".
+    videosWatchedCount
+  );
+  const videoPercent = videosTotalCount > 0
+    ? Math.round((videosWatchedCount / videosTotalCount) * 100)
     : 0;
 
   const toggleDayCompletion = async (dayNumber, currentCompleted) => {
@@ -191,6 +234,37 @@ export default function RoadmapDashboard() {
           user.profile.boardNeedsReselect and renders nothing for everyone else, so
           this costs an unaffected account exactly one falsy check. */}
       <BoardReselectPrompt />
+
+      {/* Feature 27. Renders nothing unless the server says this student is eligible
+          AND the child said yes, so an ineligible or opted-out account pays one falsy
+          check — the same shape as BoardReselectPrompt above.
+
+          `onHighlight` is the ONLY thing the dashboard hands it, and it deliberately
+          takes a section key rather than a navigate function: the mentor may switch
+          what is on screen when the child asks for it, but it may never route or click
+          on their behalf. A child who cannot read the page they were sent to cannot
+          describe where they are or find their way back. */}
+      <VoiceMentor
+        onHighlight={(section, anchorId) => {
+          if (section) setActiveSection(section);
+          if (anchorId) {
+            // Scroll only. The card is highlighted and the child is told to tap it.
+            requestAnimationFrame(() => {
+              document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+          }
+        }}
+      />
+
+      {/* B: the roadmap has just been built and the child is looking at day cards they
+          cannot read. Fires only once the tour is out of the way, so the two never
+          talk over one another. */}
+      <MentorGuide
+        line="guide.roadmapReady"
+        highlight='[data-tour="days"]'
+        when={!!activeRoadmap && activeSection === 'roadmap' && !mentorTourRunning}
+      />
+
       <div className="dashboard-card">
       <DashboardSidebar
         activeSection={activeSection}
@@ -239,7 +313,7 @@ export default function RoadmapDashboard() {
                 onSelect={selectRoadmap}
               />
             {/* Progress Banner (selected subject detail) */}
-            <div className="dashboard-progress-card">
+            <div className="dashboard-progress-card" data-tour="progress">
               <div className="progress-info-row">
                 <div>
                   <h3><Trophy size={20} className="trophy-icon" /> {t.yourRoadmapProgress}</h3>
@@ -258,8 +332,8 @@ export default function RoadmapDashboard() {
               <div className="progress-secondary-row">
                 <span className="progress-secondary-label">
                   {typeof t.videosWatchedStat === 'function'
-                    ? t.videosWatchedStat(videosWatchedCount, activeRoadmap.totalDays)
-                    : `${videosWatchedCount} of ${activeRoadmap.totalDays} videos watched`}
+                    ? t.videosWatchedStat(videosWatchedCount, videosTotalCount)
+                    : `${videosWatchedCount} of ${videosTotalCount} videos watched`}
                 </span>
                 <span className="progress-secondary-value">{videoPercent}%</span>
               </div>
@@ -276,7 +350,7 @@ export default function RoadmapDashboard() {
             )}
 
             {/* Day Cards Stack */}
-            <div className="roadmap-days-stack">
+            <div className="roadmap-days-stack" data-tour="days">
               {localDays.map((day, idx) => {
                 const hindiItem = hindiData?.[idx];
                 const displayTopic = (language === 'hi' && hindiItem?.topic) ? hindiItem.topic : day.topic;
@@ -285,6 +359,10 @@ export default function RoadmapDashboard() {
                 return (
                   <div
                     key={day.dayNumber}
+                    // Feature 27: the anchor the mentor scrolls to when it says "tap
+                    // today's card". It scrolls and highlights; the tap stays the
+                    // child's — see the onHighlight comment where VoiceMentor is mounted.
+                    id={`day-${day.dayNumber}`}
                     className={`roadmap-day-card ${day.completed ? 'completed' : ''}`}
                     onClick={() => navigate(`/roadmap/${activeRoadmap._id}/day/${day.dayNumber}`)}
                     style={{ cursor: 'pointer' }}

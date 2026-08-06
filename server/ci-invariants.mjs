@@ -665,6 +665,569 @@ if (coordHits.length) {
   }
 }
 
+// ── 18. MICROPHONE AUDIO HAS NO WRITE PATH ─────────────────────────────────
+//
+// STATE THE PROPERTY BEFORE THE EXPRESSION (Design Rule 18). Two sentences, and the
+// second one is what makes this check non-trivial:
+//
+//   (i)  No value derived from an UPLOADED audio buffer ever reaches a persistence
+//        call, and no multer instance in this server can spill a request body to disk.
+//   (ii) Writes of SYNTHESISED audio to uploads/audio/ are CORRECT and must not be
+//        caught. The TTS cache is the single biggest cost lever in Feature 27 — a check
+//        that forbade it would be reverted within a week, and rightly.
+//
+// So this cannot be "no audio is ever written". Both kinds of audio are WAV bytes
+// heading for the same directory through the same helper; nothing about the byte
+// stream distinguishes them. The discriminator is PROVENANCE: where the buffer came
+// from. `saveAudioFile(name, synthesizeSpeech(...))` is untainted and passes; the same
+// call reached by `req.file.buffer` is a build failure. That is why 18b is a taint
+// check and not a needle list — a needle list would have to allow `saveAudioFile`,
+// which is precisely the call a regression would use.
+//
+// WHY THIS IS A BUILD FAILURE AND NOT A CONVENTION:
+//
+// These are children's voices, recorded in a state-government deployment. The Feature
+// 22 Aadhaar policy is enforced by seven CI checks rather than by care, for the reason
+// that applies exactly as well here: every violation looks entirely reasonable at the
+// call site. "Cache the clip so we can retry the transcription." "Keep the last
+// recording for debugging." "Store the audio with the answer for review." Each is a
+// sensible sentence and each ends with a child's voice on a disk that has no deletion
+// policy, no consent record, and no way for a parent to ask for it back.
+//
+// A recorded voice is also strictly worse than the transcript it produces: the text is
+// the answer the child gave, which is the thing we asked for and the thing they can
+// see. The audio additionally carries who they are — it is biometric-adjacent, it
+// identifies a specific child across every recording they ever make, and unlike an
+// Aadhaar number it cannot be re-issued.
+{
+  const AUDIO_SINKS = [
+    'saveAudioFile', 'writeFileSync', 'writeFile', 'appendFileSync', 'appendFile',
+    'createWriteStream', 'uploadNoteImage', 'uploadBufferToCloudinary', 'upload_stream'
+  ];
+  // Methods on a handle the code already holds. Checked against tainted identifiers
+  // only, so ordinary `res.json(...)` is untouched.
+  const AUDIO_METHOD_SINKS = ['write', 'end', 'append', 'put', 'insertOne', 'updateOne', 'create', 'save'];
+  // Checked by PRESENCE inside a microphone-upload handler, because none of these has
+  // any correct use there.
+  const AUDIO_HANDLE_SINKS = [
+    ['createWriteStream', 'a file handle in a microphone handler can only be a write'],
+    ['openSync', 'a file handle in a microphone handler can only be a write'],
+    ['mkdtemp', 'a temp directory for a recording is still storage'],
+    ['mkdtempSync', 'a temp directory for a recording is still storage'],
+    ['tmpdir', 'NOT TO A TEMP FILE — the most plausible-sounding version of this mistake']
+  ];
+
+  // Argument text of every call to `name`, found by walking the parens rather than by
+  // regex: a nested call in an argument list defeats `\(([^)]*)\)` and would let
+  // `writeFileSync(p, Buffer.from(req.file.buffer))` through — which is exactly the
+  // shape a violation takes once someone has to convert a type on the way in.
+  const callArgs = (src, name) => {
+    const out = [];
+    const re = new RegExp(`\\b${name}\\s*\\(`, 'g');
+    let m;
+    while ((m = re.exec(src))) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      const start = i;
+      while (i < src.length && depth > 0) {
+        const ch = src[i];
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        i++;
+      }
+      out.push(src.slice(start, i - 1));
+    }
+    return out;
+  };
+
+  const audioFailures = [];
+
+  // 18a — no multer instance can write to disk. `memoryStorage` is multer's default,
+  // so the violation is never "forgot to set it": it is someone ADDING `diskStorage`
+  // or `dest:`, both of which are single-line, both of which read as configuration.
+  for (const f of files) {
+    if (!/\bmulter\b/.test(f.codeOnly)) continue;
+    if (/diskStorage/.test(f.codeOnly)) {
+      audioFailures.push(`${f.rel}: multer diskStorage — an uploaded body would be written to disk`);
+    }
+    if (/\bdest\s*:/.test(f.codeOnly)) {
+      audioFailures.push(`${f.rel}: multer dest: — an uploaded body would be written to disk`);
+    }
+  }
+
+  // 18b — the taint check, scoped PER ROUTE HANDLER rather than per file.
+  //
+  // The first version of this scoped by file and immediately reported myNotes.js, which
+  // sends `req.file.buffer` to `uploadNoteImage`. That is a note SCREENSHOT — Feature
+  // 23, uploaded deliberately by the student, resized and EXIF-stripped. Nothing to do
+  // with a microphone.
+  //
+  // The property says "uploaded AUDIO buffer"; the expression said "any upload". Rule
+  // 18 in one line: suspect the check before the code, especially when the check is
+  // newer. Loosening the property to match the expression would have been the wrong
+  // repair — image uploads are legitimate and forbidding them protects nobody.
+  //
+  // So the discriminator is the MULTER FIELD NAME on the route: only a handler that
+  // accepts a field called audio/voice/recording/speech has its buffer tainted. The
+  // field-name list is deliberately wider than the one field that exists today, so
+  // renaming `'audio'` to `'voice'` does not walk out from under the check.
+  const AUDIO_UPLOAD_FIELD_RE = /\.\s*(?:single|array)\s*\(\s*['"`](audio|voice|recording|speech|utterance)['"`]|name\s*:\s*['"`](audio|voice|recording|speech|utterance)['"`]/;
+  let audioRoutesScanned = 0;
+
+  for (const f of files) {
+    if (!/req\.file\b/.test(f.src)) continue;
+
+    // Split the file into route-handler spans. Scanned against `f.src` — which is the
+    // COMMENTS-STRIPPED, STRINGS-INTACT view (see the `files` map at the top; the
+    // property is named `src`, not `code`) — because the field name that discriminates
+    // audio from images IS a string literal, and `codeOnly` blanks it, which would make
+    // every upload in the codebase look identical.
+    //
+    // Reading `f.code` here was the first version's bug: it is `undefined`, every file
+    // was skipped, and 18b silently examined nothing. The vacuity guard below is the
+    // only reason that surfaced instead of printing PASS.
+    const marks = [...f.src.matchAll(/\brouter\s*\.\s*(?:get|post|patch|put|delete|use)\s*\(/g)].map((m) => m.index);
+    const spans = marks.map((start, i) => f.src.slice(start, marks[i + 1] ?? f.src.length));
+
+    for (const span of spans) {
+      if (!AUDIO_UPLOAD_FIELD_RE.test(span)) continue;
+      audioRoutesScanned++;
+
+      // One level of aliasing, which is the level that actually occurs: nobody threads
+      // an upload buffer through three helpers, they bind it to a local and pass the
+      // local. Deeper indirection is not covered here and is not claimed to be — 18c
+      // and 18d close the structural side, where a buffer that reaches a helper still
+      // has nowhere to land.
+      const tainted = new Set(['req.file.buffer', 'req.file']);
+      const bind = [
+        /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*req\.file(?:\.buffer)?\b/g,
+        /(?:const|let|var)\s*\{\s*buffer\s*:\s*([A-Za-z_$][\w$]*)\s*\}\s*=\s*req\.file\b/g,
+        /(?:const|let|var)\s*\{\s*file\s*:\s*([A-Za-z_$][\w$]*)\s*\}\s*=\s*req\b/g
+      ];
+      for (const re of bind) {
+        let m;
+        while ((m = re.exec(span))) tainted.add(m[1]);
+      }
+      // `const { buffer } = req.file` binds the bare name.
+      if (/(?:const|let|var)\s*\{[^}]*\bbuffer\b[^}]*\}\s*=\s*req\.file\b/.test(span)) tainted.add('buffer');
+
+      const names = [...tainted].filter((t) => !t.includes('.'));
+      const carriesTaint = (args) =>
+        [...tainted].some((t) => t.includes('.') && args.includes(t)) ||
+        names.some((n) => new RegExp(`\\b${n}\\b`).test(args));
+
+      for (const sink of AUDIO_SINKS) {
+        for (const args of callArgs(span, sink)) {
+          if (carriesTaint(args)) {
+            audioFailures.push(`${f.rel}: ${sink}(...) receives an uploaded audio buffer`);
+          }
+        }
+      }
+
+      // METHOD sinks. The first version checked only the arguments of a NAMED call, and
+      // the failure-proof harness walked straight past it with:
+      //
+      //     const { buffer } = req.file;
+      //     createWriteStream('/tmp/clip.wav').end(buffer);
+      //
+      // The buffer never appears in `createWriteStream`'s arguments — it is handed to a
+      // method on the returned handle, so an argument-only check reports nothing. That
+      // is not an exotic shape; it is how anyone actually writes a stream.
+      for (const sink of AUDIO_METHOD_SINKS) {
+        for (const args of callArgs(span, `\\.\\s*${sink}`)) {
+          if (carriesTaint(args)) {
+            audioFailures.push(`${f.rel}: .${sink}(...) receives an uploaded audio buffer`);
+          }
+        }
+      }
+
+      // PRESENCE, not arguments. Opening a file handle or reaching for a temp directory
+      // inside a microphone-upload handler has no legitimate purpose at all — there is
+      // nothing correct to do with a file descriptor there — so the mere appearance is
+      // the violation and no data-flow argument is needed.
+      //
+      // This is the clause that closes "not to a temp file". A temp file is the most
+      // plausible-sounding version of this mistake ("just while we retry the
+      // transcription") and the one least likely to be noticed in review, because it
+      // reads as cleanup-adjacent rather than as storage.
+      for (const [needle, why] of AUDIO_HANDLE_SINKS) {
+        if (new RegExp(`\\b${needle}\\b`).test(span)) {
+          audioFailures.push(`${f.rel}: ${needle} inside a microphone-upload handler — ${why}`);
+        }
+      }
+    }
+  }
+
+  // A CHECK THAT FINDS NOTHING TO CHECK PASSES REGARDLESS OF BEHAVIOUR (Design Rule
+  // 11). If the STT route is renamed, moved behind a helper, or its multer field is
+  // called something not in the list above, 18b would quietly scan zero handlers and
+  // report PASS forever — green, and blind. So the count is asserted, not assumed, and
+  // printed on success so the number is visible rather than inferred.
+  if (audioRoutesScanned === 0) {
+    audioFailures.push('NO audio-upload route was found to check — 18b scanned nothing. Either the STT route moved, or its multer field name is not in AUDIO_UPLOAD_FIELD_RE. A vacuous pass is not a pass.');
+  }
+
+  // 18c — the structural half, exactly like the coordinate invariant (6): recorded
+  // audio has NOWHERE to be written, so no careless later code can write it. A
+  // `Buffer` field on any model is the general form of the same mistake — binary bytes
+  // in a document are how "just keep the clip" ships without anyone naming it audio.
+  const AUDIO_FIELD_RE = /\b(audioBlob|audioData|audioBytes|audioBuffer|recordingUrl|recordingData|recordedAudio|voiceRecording|voiceClip|micAudio|speechAudio|utteranceAudio)\s*:/i;
+  const BUFFER_FIELD_RE = /\btype\s*:\s*Buffer\b/;
+  for (const f of files) {
+    if (!f.rel.startsWith('models/')) continue;
+    if (AUDIO_FIELD_RE.test(f.codeOnly)) audioFailures.push(`${f.rel}: a model field names recorded audio`);
+    if (BUFFER_FIELD_RE.test(f.codeOnly)) audioFailures.push(`${f.rel}: a model declares a Buffer field — binary bytes in a document`);
+  }
+
+  // 18d — the client half. In the browser the danger is not a filesystem, it is the
+  // three stores that OUTLIVE the tab (IndexedDB, Cache Storage, localStorage) plus
+  // `createObjectURL`, which is how a clip becomes a playable or downloadable artefact
+  // with a lifetime nobody is tracking.
+  //
+  // Scoped to files that actually hold a MediaRecorder, so ordinary use of localStorage
+  // elsewhere in the app is untouched. That is the point: the rule is about recorded
+  // audio, not about storage.
+  {
+    const CLIENT = new URL('../client/src', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    const walkClient = (dir, out = []) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) walkClient(full, out);
+        else if (/\.(js|jsx)$/.test(entry)) out.push(full);
+      }
+      return out;
+    };
+    const PERSIST = [
+      ['indexedDB', 'IndexedDB survives the tab, the session and the logout'],
+      ['caches.open', 'Cache Storage survives the tab, the session and the logout'],
+      ['localStorage.setItem', 'localStorage survives logout on a SHARED SCHOOL DEVICE'],
+      ['sessionStorage.setItem', 'sessionStorage outlives the utterance'],
+      ['createObjectURL', 'a blob URL is a downloadable, replayable artefact with an untracked lifetime'],
+      ['showSaveFilePicker', 'writes the recording to the device filesystem']
+    ];
+
+    for (const full of walkClient(CLIENT)) {
+      const rel = relative(CLIENT, full).split('\\').join('/');
+      const raw = readFileSync(full, 'utf8');
+      const { code, codeOnly } = scannable(raw);
+      if (!/MediaRecorder/.test(codeOnly)) continue;
+
+      for (const [needle, why] of PERSIST) {
+        if (codeOnly.includes(needle)) {
+          audioFailures.push(`client/src/${rel}: ${needle} in a recording file — ${why}`);
+        }
+      }
+      // Where the recording is allowed to GO. Transcription is the only destination,
+      // so every request originating from a recording file must be an STT request.
+      // Scanned against `code` (strings intact) because the destination IS the string.
+      const urls = [...code.matchAll(/(?:authFetch|fetch)\s*\(\s*[`'"]([^`'"]*)[`'"]/g)].map((m) => m[1]);
+      for (const u of urls) {
+        if (!/\bstt\b/.test(u)) {
+          audioFailures.push(`client/src/${rel}: a recording file requests "${u}" — recorded audio goes to transcription and nowhere else`);
+        }
+      }
+    }
+  }
+
+  if (audioFailures.length) {
+    failures.push({ name: 'microphone audio has no write path' });
+    console.log('*** FAIL ***  microphone audio has no write path');
+    audioFailures.forEach((h) => console.log(`                ${h}`));
+    console.log('                Recorded child audio exists in memory, is transcribed, and is released. Only the TEXT persists.');
+  } else {
+    console.log(`PASS          microphone audio has no write path (${audioRoutesScanned} audio-upload route(s) scanned; synthesised TTS audio may still be cached)`);
+  }
+}
+
+// ── 19. The mentor script mirrors, and Aadhaar is never voice-input ────────
+//
+// Two properties, both structural, in one place because they are both about the same
+// table.
+//
+// (a) DRIFT. The repo is not a monorepo, so the mentor's line ids exist twice —
+//     server-side with their text, client-side as ids only. The client asks for a line
+//     BY ID; an id the server has dropped resolves to no audio, and the mentor goes
+//     silent at exactly one step of a flow with no visible cause. Same guard as the
+//     taxonomy mirror (invariant 7), same reason.
+//
+// (b) AADHAAR IS NEVER VOICE-INPUT. Not the number, not the consent. This is asserted
+//     against the DATA rather than the components, because a component check only
+//     covers the components that exist today: if the field is absent from
+//     VOICE_FILLABLE_FIELDS, no present or future component that iterates that list can
+//     render a microphone for it.
+//
+//     A misheard digit fails the Verhoeff check by construction, so the voice path
+//     could only ever produce a rejection — it is not a degraded feature, it is one
+//     that cannot work. And a twelve-digit government identifier spoken aloud in a
+//     classroom is a disclosure to everyone in the room, which no later DELETE can
+//     withdraw. Consent by voice is not consent: the DPDP record is a ticked box with a
+//     timestamp, and a spoken "haan" would be a consent record with no artefact behind
+//     it — worse than no record.
+{
+  const srvScript = await import('./src/config/mentorScript.js');
+  const cliPath = new URL('../client/src/data/mentorScript.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  const cliScript = await import(`file://${cliPath}`);
+
+  const AADHAAR_OPT_OUT_HI = 'आधार और जगह अभी भरना ज़रूरी नहीं है — बाद में सेटिंग्स से भी कर सकते हो।';
+
+  const srvIds = srvScript.MENTOR_LINE_IDS;
+  const cliIds = [...cliScript.MENTOR_LINE_IDS].sort();
+  const onlyServer = srvIds.filter((k) => !cliIds.includes(k));
+  const onlyClient = cliIds.filter((k) => !srvIds.includes(k));
+
+  const incomplete = srvIds.filter((id) => {
+    const e = srvScript.MENTOR_SCRIPT[id];
+    return !e?.hi?.trim() || !e?.en?.trim();
+  });
+
+  // Every line the mentor speaks is a FIXED string. A line carrying a value the child
+  // just spoke cannot be cached, so it must never be here — and a placeholder is how
+  // one would arrive.
+  const templated = srvIds.filter((id) => {
+    const e = srvScript.MENTOR_SCRIPT[id];
+    return /\$\{|\{\{|%s|\{\d\}/.test(`${e.hi} ${e.en}`);
+  });
+
+  // Exactly one line may mention Aadhaar: the one that says it is optional.
+  const mentionsAadhaar = srvIds.filter((id) => /आधार|aadhaar/i.test(`${srvScript.MENTOR_SCRIPT[id].hi} ${srvScript.MENTOR_SCRIPT[id].en}`));
+
+  const voiceFields = cliScript.VOICE_FILLABLE_FIELDS || [];
+  const readback = cliScript.CONFIRM_READBACK_FIELDS || [];
+
+  const checks = [
+    ['the client mirrors every server line id', onlyServer.length === 0, onlyServer.join(', ')],
+    ['the client declares no line the server cannot speak', onlyClient.length === 0, onlyClient.join(', ')],
+    ['every line exists in BOTH languages', incomplete.length === 0, incomplete.join(', ')],
+    ['no line is a template — a fixed string is what makes caching possible', templated.length === 0, templated.join(', ')],
+    ['no line id names Aadhaar', srvIds.filter((id) => /aadhaar/i.test(id)).length === 0, ''],
+    ['exactly one line mentions Aadhaar, and it is the opt-out',
+      mentionsAadhaar.length === 1 && mentionsAadhaar[0] === 'profile.optional', mentionsAadhaar.join(', ')],
+    ['the Aadhaar opt-out wording is verbatim',
+      srvScript.MENTOR_SCRIPT['profile.optional']?.hi === AADHAAR_OPT_OUT_HI, ''],
+    ['aadhaarNumber is NOT voice-fillable', !voiceFields.includes('aadhaarNumber'), ''],
+    ['aadhaarConsent is NOT voice-fillable — the checkbox stays a checkbox', !voiceFields.includes('aadhaarConsent'), ''],
+    ['no voice-fillable field is Aadhaar-related', voiceFields.filter((f) => /aadhaar/i.test(f)).length === 0, ''],
+    ['every read-back field is one the microphone may fill',
+      readback.every((f) => voiceFields.includes(f)), readback.filter((f) => !voiceFields.includes(f)).join(', ')]
+  ];
+
+  const bad = checks.filter(([, ok]) => !ok);
+  if (bad.length) {
+    failures.push({ name: 'mentor script mirrors, and Aadhaar is never voice-input' });
+    console.log('*** FAIL ***  mentor script mirrors, and Aadhaar is never voice-input');
+    bad.forEach(([n, , detail]) => console.log(`                ${n}${detail ? ': ' + detail : ''}`));
+  } else {
+    console.log(`PASS          mentor script mirrors, and Aadhaar is never voice-input (${srvIds.length} lines, ${checks.length} rules)`);
+  }
+}
+
+// ── 20. A terminal provider state is never classified retryable ────────────
+//
+// PROPERTY, in words first (Design Rule 18): an error that CANNOT clear on its own must
+// never be reported as one that can. Retrying an exhausted key is not caution — it is a
+// guaranteed-futile wait, repeated with exponential backoff, that delays the caller's
+// real fallback by the whole retry budget.
+//
+// This is Design Rule 2 made checkable. The rule has now been violated in three places
+// (the diagram retry, the mentor cache warm, `callOpenAIChat`'s flat 429), each leaning
+// a different way, because the direction is not a decision — it is a consequence of not
+// reading the body. So the classification lives in ONE pure function and is asserted
+// here rather than being three regexes nobody compares.
+//
+// It ALSO runs the real `classifyProviderError` against a fake Response, which is the
+// only part of this suite that would notice the call sites failing to import it: ESM
+// resolves a missing binding at CALL time, not at parse time, so "the module parses"
+// proves nothing about whether the function is reachable. (Learned immediately: an
+// idempotency guard matched the string `providerError.js` inside a COMMENT and skipped
+// the import, leaving a call to an undefined identifier that parsed perfectly.)
+{
+  const { classifyProviderError, isTerminalProviderError } = await import('./src/utils/providerError.js');
+
+  // A Response-alike. It only needs `status` and `text()`, which is exactly what the
+  // classifier consumes — a double that could not represent a body would make this
+  // check decorative (Design Rule 9).
+  const fakeRes = (status, body) => ({ status, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)) });
+
+  const OPENAI_QUOTA = { error: { message: 'You have no credits remaining. Add credits to continue using the API.', type: 'insufficient_quota', code: 'credit_balance_exhausted' } };
+  const OPENAI_RATE = { error: { message: 'Rate limit reached for gpt-4o-mini.', type: 'rate_limit_exceeded', code: 'rate_limit_exceeded' } };
+  const BAD_KEY = { error: { message: 'Incorrect API key provided.', type: 'invalid_request_error', code: 'invalid_api_key' } };
+  const SERVER_ERR = { error: { message: 'The server had an error while processing your request.', type: 'server_error', code: null } };
+
+  const results = await Promise.all([
+    classifyProviderError(fakeRes(429, OPENAI_QUOTA), 'test'),
+    classifyProviderError(fakeRes(429, OPENAI_RATE), 'test'),
+    classifyProviderError(fakeRes(401, BAD_KEY), 'test'),
+    classifyProviderError(fakeRes(500, SERVER_ERR), 'test'),
+    classifyProviderError(fakeRes(502, '<html>Bad Gateway</html>'), 'test'),
+    classifyProviderError(fakeRes(429, ''), 'test')
+  ]);
+  const [quota, rate, badKey, serverErr, html, empty] = results;
+
+  const checks = [
+    // THE CENTRAL PAIR. Same status, opposite meanings — this is the whole reason the
+    // body has to be read, and the exact case that cost a 92-call run.
+    ['429 + insufficient_quota is TERMINAL', quota.terminal === true],
+    ['429 + rate_limit_exceeded is RETRYABLE', rate.terminal === false],
+    ['the two 429s classify DIFFERENTLY (the point of reading the body)', quota.terminal !== rate.terminal],
+
+    ['a revoked/incorrect key is terminal', badKey.terminal === true],
+    ['a 500 server error is retryable', serverErr.terminal === false],
+
+    // Unparseable bodies must not crash and must lean RETRYABLE. Wrongly calling a
+    // transient failure terminal DESTROYS something (the original Rule 2 defect: one
+    // 429 cost a cached question its figure permanently); wrongly calling an exhausted
+    // key retryable merely wastes backoff. Both are wrong, only one is unrecoverable.
+    ['a non-JSON body does not throw and leans retryable', html.terminal === false],
+    ['an empty body does not throw and leans retryable', empty.terminal === false],
+    ['a non-JSON body still keeps something greppable', html.message.length > 0],
+
+    // The summary is what an operator actually reads, so it must carry the fields that
+    // make the call — a bare status is what this whole invariant exists to eliminate.
+    ['the summary names status, type, code and terminal',
+      ['status=', 'type=', 'code=', 'terminal='].every((k) => quota.summary.includes(k))],
+    ['the summary states terminal=true for an exhausted key', quota.summary.includes('terminal=true')],
+    ['the summary states terminal=false for a rate limit', rate.summary.includes('terminal=false')],
+
+    // The pure form must agree with the Response form, or the two drift and callers
+    // holding parsed fields get a different answer from callers holding a Response.
+    ['isTerminalProviderError agrees with classifyProviderError',
+      isTerminalProviderError({ type: 'insufficient_quota' }) === true &&
+      isTerminalProviderError({ code: 'rate_limit_exceeded' }) === false],
+    ['a message-only quota signal is caught (providers that send no code)',
+      isTerminalProviderError({ message: 'You exceeded your current quota, please check your plan and billing details.' }) === true],
+    ['an empty object is not terminal', isTerminalProviderError({}) === false],
+    ['no argument does not throw', isTerminalProviderError() === false]
+  ];
+
+  // ── The call sites actually REACH the classifier ──
+  //
+  // Asserted by grep rather than by execution because executing them needs live keys.
+  // The pairing is what matters: a file that CALLS `classifyProviderError` must also
+  // IMPORT it. That is the missing-import bug, and it is invisible to a parse check.
+  const callSites = files.filter((f) => f.codeOnly.includes('classifyProviderError('));
+  const unimported = callSites
+    .filter((f) => f.rel !== 'utils/providerError.js')
+    .filter((f) => !/import\s*\{[^}]*classifyProviderError[^}]*\}\s*from/.test(f.codeOnly));
+
+  checks.push(['every caller of classifyProviderError imports it',
+    unimported.length === 0, unimported.map((f) => f.rel).join(', ')]);
+  // Vacuity guard, per the practice in PRODUCTION_CHECKLIST: a selector that matches
+  // nothing passes regardless of behaviour.
+  checks.push(['at least one call site exists to check', callSites.length >= 2, `${callSites.length} found`]);
+
+  const bad = checks.filter(([, ok]) => !ok);
+  if (bad.length) {
+    failures.push({ name: 'terminal provider errors are never classified retryable' });
+    console.log('*** FAIL ***  terminal provider errors are never classified retryable');
+    bad.forEach(([n, , detail]) => console.log(`                ${n}${detail ? ': ' + detail : ''}`));
+  } else {
+    console.log(`PASS          terminal provider errors are never classified retryable (${checks.length} rules, ${callSites.length} call sites)`);
+  }
+}
+
+// ── 21. Narration never speaks text in a language it is not in ─────────────
+//
+// PROPERTY, stated first: translation is attempted EXACTLY when the language the text
+// is actually in differs from the language the student asked to hear — and when a
+// translation fails, the text is spoken in ITS OWN language, never in the requested one.
+//
+// The second half is the defect this exists for. Speaking untranslated English words
+// through a Hindi voice is not a degraded result, it is an unintelligible one, and it
+// was reached by comparing the requested language against the SITE TOGGLE instead of
+// against the text. The toggle says what a student PREFERS; it says nothing about what
+// a given string IS. A Hindi-toggle student whose question had no cached translation
+// was shown English, the toggle still said 'hi', and the route concluded there was
+// nothing to translate.
+//
+// Asserted here rather than left inline because this path is shared by EVERY grade and
+// subject: a regression reaches Class 10 students who have nothing to do with the
+// Voice Mentor.
+{
+  const { resolveSpeakPlan, speakLangAfterTranslationFailure } = await import('./src/utils/narrationLang.js');
+
+  const p = (sourceLang, narrationLang) => resolveSpeakPlan({ sourceLang, narrationLang });
+
+  const checks = [
+    // Same language: nothing to do, and nothing paid for.
+    ['en text, en wanted -> no translation', p('en', 'en').needsTranslation === false],
+    ['hi text, hi wanted -> no translation', p('hi', 'hi').needsTranslation === false],
+    ['en text, en wanted -> speaks en', p('en', 'en').speakLang === 'en'],
+    ['hi text, hi wanted -> speaks hi', p('hi', 'hi').speakLang === 'hi'],
+
+    // THE CASE THAT WAS BROKEN: English text on a Hindi-preferring session.
+    ['en text, hi wanted -> DOES translate', p('en', 'hi').needsTranslation === true],
+    ['en text, hi wanted -> translates to hi', p('en', 'hi').translateTo === 'hi'],
+
+    // The unsupported direction degrades to intelligible, not to preferred.
+    ['hi text, en wanted -> no translation (one-way translator)', p('hi', 'en').needsTranslation === false],
+    ['hi text, en wanted -> speaks the HINDI text in a hi voice, not hi words in an en voice',
+      p('hi', 'en').speakLang === 'hi'],
+
+    // Failure ALWAYS falls back to the source, never to the request.
+    ['a failed en->hi translation speaks ENGLISH', speakLangAfterTranslationFailure('en') === 'en'],
+    ['a failed translation never speaks the requested language when it differs',
+      speakLangAfterTranslationFailure('en') !== 'hi'],
+
+    // Garbage in must not silently become Hindi.
+    ['an unknown source language is treated as en', p(undefined, 'en').speakLang === 'en'],
+    ['an unknown narration language is treated as en', p('en', undefined).needsTranslation === false]
+  ];
+
+  // ── EVERY fallback response must carry the language OF ITS TEXT ──────────
+  //
+  // A3 has now been found at THREE sites and the third was the client filling a gap the
+  // server left. When TTS is exhausted a route hands back `fallbackText` for the browser
+  // to speak — and if it omits `fallbackLang`, SpeakerButton has nothing to go on and
+  // substituted the student's PREFERENCE, which is a proxy for "what language is this
+  // text in". Untranslated English then spoke through a Hindi voice, intermittently,
+  // exactly tracking which questions had a cached translation.
+  //
+  // Six of the seven fallback responses omitted it. This asserts the pairing directly:
+  // no `fallbackText` without a `fallbackLang` beside it.
+  {
+    const fallbackRe = /useFallback:\s*true[^}]*}/g;
+    for (const f of files) {
+      if (!f.rel.startsWith('routes/')) continue;
+      for (const m of f.codeOnly.match(fallbackRe) || []) {
+        if (!m.includes('fallbackLang')) {
+          checks.push([`${f.rel}: a fallback response omits fallbackLang`, false, m.slice(0, 80)]);
+        }
+      }
+    }
+    // Vacuity guard: if the shape changes and nothing matches, this check silently
+    // covers nothing.
+    const total = files.filter((f) => f.rel.startsWith('routes/'))
+      .reduce((n, f) => n + (f.codeOnly.match(fallbackRe) || []).length, 0);
+    checks.push(['fallback responses were actually found to check', total >= 4, `${total} found`]);
+  }
+
+  // The client must NEVER infer the fallback language from the narration preference.
+  {
+    const CLIENT = new URL('../client/src', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    const sb = readFileSync(join(CLIENT, 'components/SpeakerButton.jsx'), 'utf8');
+    const code = scannable(sb).codeOnly;
+    checks.push(['SpeakerButton reads fallbackLang from the server', code.includes('data.fallbackLang')]);
+    checks.push(['SpeakerButton does not substitute narrationLang for the fallback language',
+      !/speakLang\s*=\s*[^;]*narrationLang/.test(code)]);
+  }
+
+  // The route must not have gone back to comparing against the site toggle.
+  const diag = files.find((f) => f.rel === 'routes/diagnostic.js');
+  checks.push(['live-audio decides via resolveSpeakPlan, not an inline language compare',
+    !!diag && diag.codeOnly.includes('resolveSpeakPlan(')]);
+  checks.push(['live-audio reads sourceLang from the client',
+    !!diag && diag.codeOnly.includes('sourceLang')]);
+
+  const bad = checks.filter(([, ok]) => !ok);
+  if (bad.length) {
+    failures.push({ name: 'narration never speaks text in a language it is not in' });
+    console.log('*** FAIL ***  narration never speaks text in a language it is not in');
+    bad.forEach(([n]) => console.log(`                ${n}`));
+  } else {
+    console.log(`PASS          narration never speaks text in a language it is not in (${checks.length} rules)`);
+  }
+}
+
 console.log('');
 if (failures.length) {
   console.log(`${failures.length} invariant(s) violated.`);

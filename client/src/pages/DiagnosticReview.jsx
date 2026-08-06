@@ -9,6 +9,8 @@ import { CheckCircle2, XCircle, Trophy, Sparkles, ArrowRight, Loader2 } from 'lu
 import SpeakerButton from '../components/SpeakerButton.jsx';
 import QuestionDiagram from '../components/QuestionDiagram.jsx';
 import { WrittenReview } from '../components/WrittenQuestion.jsx';
+import MentorGuide from '../components/MentorGuide.jsx';
+import MentorScoreReadout from '../components/MentorScoreReadout.jsx';
 
 export default function DiagnosticReview() {
   const { id } = useParams();
@@ -135,6 +137,11 @@ export default function DiagnosticReview() {
       <div className="review-container">
         {/* Header Banner */}
         <header className="review-header-card">
+          {/* The score contains NUMBERS, so it can never be a cached line. Spoken with
+              the browser's own voice, and refused rather than substituted when the
+              device has no voice for the language. */}
+          <MentorScoreReadout score={result.score} total={result.totalQuestions} />
+
           <div className="review-score-badge">
             <Trophy size={28} className="trophy-icon" />
             <div>
@@ -307,11 +314,22 @@ export default function DiagnosticReview() {
           })}
         </div>
 
+        {/* B: the review is where a child learns what happens NEXT. Silence here
+            strands them at the exact moment the roadmap gets made — they have finished
+            a test, something has clearly happened, and nothing says what to do. */}
+        <MentorGuide line="guide.reviewWeak" when={true} />
+        <MentorGuide
+          line="guide.generateRoadmap"
+          highlight='[data-mentor="generate-roadmap"]'
+          when={!generatingRoadmap}
+        />
+
         {/* Generate Roadmap Action Footer */}
         <div className="review-action-footer">
           <button
             type="button"
             className="primary-button large"
+            data-mentor="generate-roadmap"
             onClick={handleGenerateRoadmap}
             disabled={generatingRoadmap}
           >

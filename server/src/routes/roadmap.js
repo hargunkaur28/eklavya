@@ -9,8 +9,8 @@ import { recordStudyActivity } from '../utils/recordActivity.js';
 import { computeWeakTopics, normalizeTopic, WEAK_TOPIC_THRESHOLD, WEAK_TOPIC_MIN_QUESTIONS } from '../utils/weakTopics.js';
 import { gradeWritten } from '../utils/gradeWritten.js';
 import { generateWritten, writtenStyleFor } from '../utils/generateWritten.js';
-import { normalizeGrade, normalizeSubject, subjectScopeLabel, isWrittenHeavy, subjectDiagramEligible } from '../config/taxonomy.js';
-import { getBlueprint, chapterForTopic } from '../config/syllabusBlueprint.js';
+import { normalizeGrade, normalizeSubject, subjectScopeLabel, isWrittenHeavy, subjectDiagramEligible, GRADES } from '../config/taxonomy.js';
+import { getBlueprint, chapterForTopic, gradeAnchor } from '../config/syllabusBlueprint.js';
 import {
   attachDiagrams, rejectOrphanedFigureQuestions, needsDiagramRetry,
   DIAGRAM_SHARE_MODULE_QUIZ, CACHED_SVG_MAX_BYTES
@@ -302,19 +302,67 @@ function buildBlueprintRoadmap(grade, subject, subSubject, weakTopics) {
 // got one sentence that taught nothing, and never got real content again even
 // after Groq recovered. A missing lesson the student can retry is strictly better
 // than a fake one that looks delivered.
+// ── Grade anchoring (device-testing finding D) ──────────────────────────────
+//
+// A Class 1 roadmap was teaching whole and rational numbers. The cause was structural,
+// not a bad generation: the DIAGNOSTIC is grounded — it gets `GRADE_LEVEL_ANCHORS` plus
+// three worked exemplars, which is the whole point of Workstream A1 — but everything
+// DOWNSTREAM of it got the grade as a bare string. `Grade: "Class 1"` in a prompt is a
+// label, not a constraint, and a model handed a label writes at whatever level the
+// topic name suggests to it. "Number System" suggests the Class 6 chapter.
+//
+// So the same anchor the diagnostic uses is injected here. It is DETERMINISTIC and free
+// — `gradeAnchor()` is a table lookup covering every grade including Nursery — which is
+// why anchors are reused downstream and exemplars are not: exemplars would mean a
+// `resolveBlueprint` call per day for every grade below Class 10.
+//
+// PRIMARY GRADES GET A HARDER INSTRUCTION THAN AN ANCHOR ALONE, because the failure is
+// asymmetric. Writing slightly below level wastes a child's time; writing four years
+// above it is content they cannot read at all, and — since a day's lesson is CACHED —
+// it is served that way for the life of the roadmap.
+const PRIMARY_MAX_GRADE_INDEX = GRADES.indexOf('Class 5');
+function isPrimaryGrade(grade) {
+  const i = GRADES.findIndex((g) => normalizeGrade(g) === normalizeGrade(grade));
+  return i >= 0 && i <= PRIMARY_MAX_GRADE_INDEX;
+}
+
 async function callGroqForDayContent(grade, subject, topic, focus) {
-  const prompt = `Write a comprehensive, clear, 2-3 paragraph educational explanation for a student in ${grade} studying ${subject}.
+  const primary = isPrimaryGrade(grade);
+  const anchor = gradeAnchor(grade);
+
+  // THE LENGTH INSTRUCTION IS BANDED, and this is not a stylistic preference. A
+  // "comprehensive 2-3 paragraph explanation" is the right shape for Class 10 and the
+  // wrong shape for Class 1, where brevity IS the requirement — asking a model for
+  // three paragraphs on counting to 100 is asking it to pad, and padding at that age
+  // means reaching for material the child has not met.
+  const shape = primary
+    ? `Write a SHORT, very simple explanation for a young child in ${grade} studying ${subject}.
+Use 4 to 6 short sentences in total. Everyday words a small child already knows. One idea per sentence.
+Do NOT introduce any concept beyond ${grade}. Do NOT mention advanced terms (for example: whole numbers, natural numbers, rational numbers, integers, prime numbers, place value beyond what ${grade} covers) unless the topic itself is exactly that.`
+    : `Write a comprehensive, clear, 2-3 paragraph educational explanation for a student in ${grade} studying ${subject}.
+Explain the key theoretical concepts, important rules/formulas, and practical applications in student-friendly tone.`;
+
+  const prompt = `${shape}
 Topic: "${topic}"
 Focus: "${focus}"
 
-Explain the key theoretical concepts, important rules/formulas, and practical applications in student-friendly tone. Do not use markdown headings. Plain formatted paragraphs only.`;
+The cognitive level for ${grade} is: ${anchor}
+Everything you write must sit AT that level — not above it. If the topic name is also used in higher classes, teach only the ${grade} meaning of it.
+
+Do not use markdown headings. Plain formatted paragraphs only.`;
 
   try {
     // Shared client → 70b → 8b → OpenAI, plus the rate-limit circuit breaker.
     const text = await callGroqChat([{ role: 'user', content: prompt }], { temperature: 0.4 });
     const trimmed = (text || '').trim();
     // A one-line reply is not a lesson; treat it as a failure rather than cache it.
-    return trimmed.length >= 200 ? trimmed : null;
+    //
+    // THE FLOOR IS BANDED TOO. At 200 characters it was actively wrong below Class 6:
+    // it forced length in the one place brevity is the requirement, so a correct short
+    // Class 1 lesson was REJECTED as a failure and the day cached nothing. The primary
+    // floor is low enough to catch a genuine one-line non-answer and nothing else.
+    const floor = primary ? 80 : 200;
+    return trimmed.length >= floor ? trimmed : null;
   } catch (err) {
     console.warn('Groq day content call failed:', err.message);
     return null;
@@ -606,9 +654,19 @@ async function callGroqForModuleQuiz(grade, subject, topic, focus, content) {
   }
 
   const grounding = (content || '').trim().slice(0, 4000);
+  // Finding D again, one layer on: the quiz got `Grade: "Class 1"` as a bare label with
+  // no cognitive anchor, so it wrote whatever the topic name suggested. A quiz is worse
+  // than a lesson to get wrong — the child is graded on it, and the module-quiz pass is
+  // half the Feature 9 completion gate, so an off-level quiz can lock a day permanently.
+  const anchor = gradeAnchor(grade);
+  const primaryRule = isPrimaryGrade(grade)
+    ? `\nThis is a YOUNG CHILD. Every question must use short everyday words, one step only, and nothing beyond ${grade}. Do NOT use advanced vocabulary (whole numbers, natural numbers, rational numbers, integers, prime numbers) unless the lesson itself is exactly about it.`
+    : '';
+
   const prompt = `You are writing a module quiz for ONE specific lesson in a study roadmap.
 
 Grade: "${grade}"
+Cognitive level for this grade (questions must sit AT this level, never above it): ${anchor}${primaryRule}
 Subject: "${subject}"
 Lesson topic: "${topic}"
 Lesson focus: "${focus}"
@@ -644,7 +702,35 @@ Return ONLY valid JSON in exactly this shape:
 }
 
 // True if the day's video requirement (Phase 2, OR logic) is satisfied.
+//
+// ── A DAY WITH NO VIDEO HAS NO VIDEO REQUIREMENT ────────────────────────────
+//
+// The Feature 9 gate is "a video watched AND the quiz passed". That is correct while a
+// day HAS videos. When it has none, the first half is unsatisfiable and the day becomes
+// permanently uncompletable — the student passes the quiz, the day stays open, and
+// nothing on screen explains why. There is no action available to them that closes it.
+//
+// Days legitimately arrive with no video: `fetchYoutubeResources` returns `[]` when the
+// API key is unset, when the quota is spent, when the request errors, and — since the
+// grade-banded ranking was added (finding D) — whenever a search yields nothing this
+// grade should be shown. That last one is a FEATURE working correctly, and it must not
+// produce a dead end.
+//
+// The Voice Mentor made this urgent rather than theoretical: it now tells a child with
+// no video to "read the lesson and answer the questions", and before this change that
+// instruction led them into a day that could never be completed. Instructing a child
+// who cannot read the screen into a dead end is the worst failure this feature can have.
+//
+// So the requirement is VACUOUSLY SATISFIED when there is nothing to watch. This
+// deliberately does NOT weaken the gate where it applies: a day with videos still
+// requires one to be watched. It only stops the gate applying to something that is not
+// there.
+export function dayHasVideos(day) {
+  return (day?.resources || []).some((r) => r?.type === 'youtube');
+}
+
 function isAnyVideoWatched(day) {
+  if (!dayHasVideos(day)) return true;   // nothing to watch — see above
   return (day.videoProgress || []).some(v => v.watched) || Boolean(day.videoWatched);
 }
 
@@ -1589,8 +1675,12 @@ router.get('/:id/day/:dayNumber/quiz/question/:qIndex/audio', authMiddleware, as
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      // Sarvam unavailable -> signal frontend to use its Web Speech fallback.
-      return res.json({ useFallback: true, fallbackText: textToSpeak });
+      // fallbackLang IS REQUIRED, NOT OPTIONAL. The client speaks this text with the
+      // browser voice, and without a language it defaults to the student PREFERENCE —
+      // which is a proxy for "what language is this text in", and wrong exactly when the
+      // text could not be translated. That is the A3 defect (English words in a Hindi
+      // voice) at its third site. Send the language of the TEXT, always.
+      return res.json({ useFallback: true, fallbackText: textToSpeak, fallbackLang: useHi ? 'hi' : 'en' });
     }
 
     const audioUrl = saveAudioFile(filename, audioBuffer);
@@ -1601,7 +1691,7 @@ router.get('/:id/day/:dayNumber/quiz/question/:qIndex/audio', authMiddleware, as
     res.json({ audioUrl });
   } catch (error) {
     console.error('Quiz question audio error:', error.message);
-    return res.json({ useFallback: true, fallbackText: 'Quiz question' });
+    return res.json({ useFallback: true, fallbackText: 'Quiz question', fallbackLang: 'en' });
   }
 });
 
@@ -1727,8 +1817,12 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     const audioBuffer = await synthesizeSpeech(textToSpeak, targetLang, lockKey);
 
     if (!audioBuffer) {
-      // Sarvam API out of credits or unavailable -> signal frontend to use Web Speech API fallback
-      return res.json({ useFallback: true, fallbackText: textToSpeak });
+      // fallbackLang IS REQUIRED, NOT OPTIONAL. The client speaks this text with the
+      // browser voice, and without a language it defaults to the student PREFERENCE —
+      // which is a proxy for "what language is this text in", and wrong exactly when the
+      // text could not be translated. That is the A3 defect (English words in a Hindi
+      // voice) at its third site. Send the language of the TEXT, always.
+      return res.json({ useFallback: true, fallbackText: textToSpeak, fallbackLang: isHindi ? 'hi' : 'en' });
     }
 
     // Save audio file to disk and update MongoDB pointer
@@ -1739,7 +1833,7 @@ router.get('/:id/day/:dayNumber/audio', authMiddleware, async (req, res) => {
     res.json({ audioUrl });
   } catch (error) {
     console.error('Roadmap day audio error:', error.message);
-    return res.json({ useFallback: true, fallbackText: 'Lesson content' });
+    return res.json({ useFallback: true, fallbackText: 'Lesson content', fallbackLang: 'en' });
   }
 });
 

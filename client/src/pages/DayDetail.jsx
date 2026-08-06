@@ -7,7 +7,16 @@ import { ArrowLeft, CheckSquare, Square, Clock, Youtube, FileText, ExternalLink,
 import SpeakerButton from '../components/SpeakerButton.jsx';
 import YouTubePlayer from '../components/YouTubePlayer.jsx';
 import ModuleQuiz from '../components/ModuleQuiz.jsx';
+import MentorGuide from '../components/MentorGuide.jsx';
 import { getLocalDate } from '../utils/streak.js';
+
+/** The day's YouTube video ids, safely — used by the mentor's completion signals. */
+function mentorVideoIdsSafe(dayData) {
+  return (dayData?.resources || [])
+    .filter((r) => r?.type === 'youtube')
+    .map((r) => getYouTubeVideoId(r.url))
+    .filter(Boolean);
+}
 
 function getYouTubeVideoId(url) {
   if (!url) return null;
@@ -179,6 +188,40 @@ export default function DayDetail() {
     );
   }
 
+  // The lesson narration has finished (or was never going to play). Until then the
+  // videos are not highlighted — the device pass found the ring landing on them while
+  // the overview was still being read aloud.
+  const overviewDone = autoPlayIndex === -1;
+
+  // ── ITEMS 3 AND 4 ARE ONE CAUSE: guidance decided BEFORE progress arrived ──
+  //
+  // `loading` is true until the day fetch resolves, and videoProgress arrives with it.
+  // On first render `watchedCount` is therefore 0 for EVERY day — including one whose
+  // videos are all watched — so the "watch the videos" line won the race and spoke, and
+  // MentorGuide speaks each line once, so the correct "you have finished, take the quiz"
+  // line never got its turn.
+  //
+  // That is the general form recorded last round, in its most literal shape: THE MENTOR
+  // SPOKE FROM WHERE THE CHILD ARRIVED, NOT FROM WHERE THEY ARE. Every line below is
+  // therefore gated on the data being present, not merely on the component being mounted.
+  const progressReady = !loading && !!dayData;
+
+  // Item 4: re-watching an already-watched video must still prompt the quiz. The
+  // condition is "all videos are watched", not "a video just BECAME watched" — so the
+  // replay key is the completion COUNT plus the latest watch timestamp, which changes on
+  // a re-watch even though watchedCount does not.
+  const lastWatchAt = mentorVideoIdsSafe(dayData).reduce((max, id) => {
+    const at = videoProgress[id]?.watchedAt;
+    return at && at > max ? at : max;
+  }, '');
+
+  const mentorVideoIds = (dayData?.resources || [])
+    .filter((r) => r.type === 'youtube')
+    .map((r) => getYouTubeVideoId(r.url))
+    .filter(Boolean);
+  const videoTotal = mentorVideoIds.length;
+  const watchedCount = mentorVideoIds.filter((id) => videoProgress[id]?.watched).length;
+
   return (
     <div className="day-detail-page">
       <div className="day-detail-container">
@@ -226,6 +269,10 @@ export default function DayDetail() {
           </div>
         </header>
 
+        {/* Feature 27 (B): the mentor's view of this day's videos, derived from the
+            SAME state the cards render from. A separate count would be a second source
+            of truth about progress, which is the one thing utils/mentorContext.js
+            exists to avoid. */}
         {/* Prose Content Body. `contentAvailable === false` means generation was
             unavailable — the server caches nothing in that case, so a reload
             genuinely retries. Videos and the quiz below still work. */}
@@ -259,8 +306,59 @@ export default function DayDetail() {
           )}
         </article>
 
+        {/* ── B: the day page, the screen with the most steps and the least text ──
+            Four states, four different instructions. They are mutually exclusive by
+            construction (`when`), so the mentor says exactly one thing at a time.
+
+            The no-video case is NOT a cosmetic branch: the Feature 9 gate needs a video
+            watched AND the quiz passed, so a day with no usable video cannot be
+            completed at all. The mentor must not tell a child to press a video that is
+            not there — see PRODUCTION_CHECKLIST for the underlying gap, which is NOT
+            fixed here. */}
+        <MentorGuide
+          line="guide.noVideoToday"
+          when={!!dayData && !(dayData.resources || []).some((r) => r.type === 'youtube')}
+        />
+        {/* THE STATES ARE MUTUALLY EXCLUSIVE AND ORDERED BY WHAT IS LEFT TO DO, not by
+            what the child has just arrived at. The device pass found the mentor speaking
+            from where the child ARRIVED: it re-narrated the video guidance on a day whose
+            videos were already watched, and highlighted the videos while the lesson was
+            still being read out.
+
+            `overviewDone` gates the first line: the existing autoPlayIndex reaches -1
+            when the lesson narration finishes, so the videos are not highlighted while
+            the child is still being read to. */}
+        <MentorGuide
+          line="guide.dayOverviewDone"
+          highlight='[data-mentor="videos"]'
+          when={progressReady && overviewDone && videoTotal > 0 && watchedCount === 0}
+        />
+        <MentorGuide
+          line="guide.nextVideo"
+          highlight='[data-mentor="videos"]'
+          when={progressReady && overviewDone && videoTotal > 1 && watchedCount > 0 && watchedCount < videoTotal}
+          replayKey={watchedCount}
+        />
+        {/* Fires IMMEDIATELY on arrival when everything is already watched — no
+            `overviewDone` gate, because a child returning to a finished module should
+            not sit through the lesson narration before being told the one thing left. */}
+        <MentorGuide
+          line="guide.videosDoneTakeQuiz"
+          highlight='[data-mentor="module-quiz"]'
+          when={progressReady && videoTotal > 0 && watchedCount >= videoTotal}
+          replayKey={`${watchedCount}-${lastWatchAt}`}
+        />
+        {/* The page already prints "Watch a video and pass the module quiz to complete
+            this day" when Mark-as-Complete is refused. A child who cannot read it is
+            silently blocked, so the mentor says it. */}
+        <MentorGuide
+          line="guide.dayNotComplete"
+          when={!!gateMessage}
+          replayKey={gateMessage}
+        />
+
         {/* Curated Resources Section */}
-        <section className="day-resources-section">
+        <section className="day-resources-section" data-mentor="videos">
           <h3>{t.verifiedResources}</h3>
           {dayData.resources && dayData.resources.length > 0 ? (
             <div className="resources-grid">
@@ -363,6 +461,10 @@ export default function DayDetail() {
         </section>
 
         {/* Phase 3: module quiz — gates day completion */}
+        {/* The ring used to be anchored to an empty <div/> here, which measured 0px
+            tall and rendered as a glowing sliver between two cards. An anchor must be a
+            REAL element; MentorHighlightRing now also refuses a degenerate rect, but
+            that is a backstop, not the fix. */}
         <ModuleQuiz
           roadmapId={roadmapId}
           dayNumber={dayNumber}

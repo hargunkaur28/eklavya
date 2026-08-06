@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "node --watch-path=./src src/server.js",
     "test:invariants": "node ci-invariants.mjs",
+    "test:audio-proof": "node test-audio-invariant-proof.mjs",
     "test:diagnostic": "node regress-wsA.mjs",
     "test:coverage": "node test-coverage-handoff.mjs",
     "test:filler": "node test-filler-audit.mjs",
@@ -16,7 +17,7 @@
     "test:reorder": "node test-reorder.mjs",
     "test:privacy": "node test-aadhaar-privacy.mjs",
     "diag:cloudinary": "node test-cloudinary-keys.mjs",
-    "test:server": "npm run test:invariants && npm run test:diagnostic && npm run test:coverage && npm run test:graft && npm run test:notes && npm run test:reorder && node test-lowergrade-figures.mjs && node test-auth-payload-shape.mjs && node test-aadhaar-key-absence.mjs",
+    "test:server": "npm run test:invariants && npm run test:audio-proof && npm run test:diagnostic && npm run test:coverage && npm run test:graft && npm run test:notes && npm run test:reorder && node test-lowergrade-figures.mjs && node test-auth-payload-shape.mjs && node test-aadhaar-key-absence.mjs",
     "test:diagrams": "node test-diagram-wiring.mjs",
     "test:lowergrade": "node test-lowergrade-figures.mjs",
     "test:hindi": "node test-hindi-register.mjs",
@@ -30,7 +31,8 @@
     "clear:diagrams": "node src/scripts/clear-diagram-cache.js",
     "test:subject": "node test-subject-competency.mjs",
     "test:board": "node test-board-reduction.mjs",
-    "test:pyq": "node test-pyq.mjs"
+    "test:pyq": "node test-pyq.mjs",
+    "warm:mentor-audio": "node src/scripts/warm-mentor-audio.js"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",

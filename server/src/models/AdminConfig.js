@@ -15,6 +15,25 @@ const adminConfigSchema = new mongoose.Schema({
   role: { type: String, default: 'Super Admin' },
   failedLoginAttempts: { type: Number, default: 0 },
   lockedUntil: { type: Date, default: null },
+
+  // ── Feature 27: the Voice Mentor's grade ceiling ────────────────────────
+  //
+  // The mentor is for children who cannot yet read the UI, which today means roughly
+  // nursery through Class 5. That is a SETTING, not a constant, because "which children
+  // cannot read the interface" is a question about a deployment's actual students and
+  // not something this repo can answer once for every state that installs it.
+  //
+  // `null` means "no override" and falls through to MENTOR_MAX_GRADE in the env, then
+  // to the built-in default — the same precedence the admin credentials above use, and
+  // for the same reason: env vars are not app-editable on Render, so an operator with
+  // no deploy access could otherwise never change it.
+  //
+  // Changing this takes effect for NEW SESSIONS without a redeploy. It deliberately
+  // does not reach back into a session already running: a mentor that goes silent
+  // mid-sentence because an admin saved a form is indistinguishable, to a child, from
+  // a mentor that broke.
+  mentorMaxGrade: { type: String, default: null },
+
   updatedAt: { type: Date, default: Date.now }
 });
 

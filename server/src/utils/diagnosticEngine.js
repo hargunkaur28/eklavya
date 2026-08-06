@@ -21,6 +21,49 @@ export const MIN_QUESTIONS = 8;
 export const MAX_QUESTIONS = 20;
 export const ROUND_SIZE = 4;
 
+// ── The cap is BANDED BY GRADE (device-testing finding C1) ──────────────────
+//
+// 15 for Class 5 and below, 20 above. Attention span is the binding constraint for a
+// small child and is not a constraint at all for a Class 10 student sitting a
+// board-prep diagnostic.
+//
+// A GLOBAL CUT WOULD HAVE COST WHAT THE BAND PROTECTS. `selectWorkingChapters` sizes
+// the probe set as `floor(mcqMax / RESOLVE_MIN_ASKED) - 1`, so the cap is not a free
+// constant — it is the syllabus-coverage dial:
+//
+//     mcqMax 20 -> floor(10) - 1 = 9 probe chapters
+//     mcqMax 15 -> floor(7)  - 1 = 6 probe chapters
+//
+// Applying 15 everywhere would have taken a third of a Class 10 student's diagnostic
+// breadth to solve a problem they do not have.
+//
+// The resolve-before-open budget rule still holds at 15, with proportionally MORE slack
+// than at 20: resolving a chapter costs at least RESOLVE_MIN_ASKED (2), so 6 chapters
+// need 12 of the 15 (3 spare), where 9 chapters need 18 of the 20 (2 spare).
+// MIN_QUESTIONS stays 8 and is comfortably below both caps.
+export const PRIMARY_MAX_QUESTIONS = 15;
+const PRIMARY_BAND_LAST_GRADE = 'Class 5';
+
+/**
+ * The MCQ+written ceiling for a grade.
+ *
+ * Feature 1's rule is untouched by this: the diagnostic still never renders a TOTAL,
+ * because it still does not have one. This is a ceiling the student can be shown
+ * honestly ("max 15"), which is a different claim from a fixed length.
+ *
+ * An unknown grade gets the primary cap. Design Rule 19 — the recoverable direction:
+ * a shorter diagnostic for an older student costs some coverage, while a 20-question
+ * diagnostic for a six-year-old is one they do not finish, and an abandoned diagnostic
+ * produces no roadmap at all.
+ */
+export function maxQuestionsForGrade(grade, grades = []) {
+  const norm = (g) => String(g || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const gi = grades.findIndex((g) => norm(g) === norm(grade));
+  const pi = grades.findIndex((g) => norm(g) === norm(PRIMARY_BAND_LAST_GRADE));
+  if (gi < 0 || pi < 0) return PRIMARY_MAX_QUESTIONS;
+  return gi <= pi ? PRIMARY_MAX_QUESTIONS : MAX_QUESTIONS;
+}
+
 const DIFFICULTY_LADDER = ['easy', 'medium', 'hard'];
 const START_DIFFICULTY = 'medium';
 

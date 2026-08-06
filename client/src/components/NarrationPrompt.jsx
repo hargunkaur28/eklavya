@@ -3,6 +3,7 @@ import { Volume2, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { primeAudio } from '../utils/audioPriming.js';
+import MentorGuide from './MentorGuide.jsx';
 
 // Phase 3: one-time narration prompt shown on the student's first quiz encounter
 // (diagnostic / module quiz / practice — whichever comes first). Each quiz surface
@@ -56,8 +57,19 @@ export default function NarrationPrompt({ onDone }) {
         <h3 className="narration-prompt-title">{t('auth.narrationPromptTitle')}</h3>
         <p className="narration-prompt-desc">{t('auth.narrationPromptDesc')}</p>
 
+        {/* B: if guidance was accepted, THIS screen speaks too. It is a modal in front
+            of a child who cannot read it, asking a question whose two buttons look
+            identical to them — the one place where staying silent guarantees a wrong
+            answer rather than merely an uninformed one. The line names which button
+            does what and says which one suits them. */}
+        <MentorGuide
+          line="guide.narrationPrompt"
+          highlight='[data-mentor="narration-choices"]'
+          when={true}
+        />
+
         {/* Yes / No choice */}
-        <div className="narration-prompt-choices">
+        <div className="narration-prompt-choices" data-mentor="narration-choices">
           <button
             type="button"
             className={`narration-prompt-choice ${wantNarration === true ? 'selected' : ''}`}

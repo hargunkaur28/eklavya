@@ -475,6 +475,40 @@ export const translations = {
       yourAnswer: 'Your answer',
       done: 'Done'
     },
+    voiceMentor: {
+      // The offer, made immediately after signup
+      offerAsk: 'Would you like me to stay with you and guide you out loud?',
+      offerLanguage: 'Which language would you like to hear me in?',
+      offerYes: 'Yes',
+      offerNo: 'No',
+      offerSkip: 'Skip for now',
+      // The persistent control
+      tapToTalk: 'Tap to talk to me',
+      stopListening: 'Stop listening',
+      mute: 'Mute the mentor',
+      unmute: 'Unmute the mentor',
+      showMeAround: 'Show me around',
+      // The tour
+      tourLabel: 'A quick tour of your page',
+      skipTour: 'Skip',
+      // The two-button fallback, offered INSTEAD of re-asking an open question
+      choicesLabel: 'What would you like to do?',
+      choiceStudy: 'My study plan',
+      choicePractice: 'Practice questions',
+      // The course picker
+      sayYourClass: 'Say which class you are in',
+      sayYourSubject: 'Say which subject you want',
+      orTapAbove: 'Or tap a button above',
+      // Settings
+      settingsHeading: 'Voice Mentor',
+      settingsSub: 'A spoken guide that reads the screen aloud and listens when you tap it.',
+      settingsEnable: 'Turn the voice mentor on',
+      settingsLanguage: 'Mentor language',
+      settingsReplayTour: 'Play the tour again',
+      settingsUnavailable: 'The voice mentor is set up for younger classes on this platform.',
+      langHindi: 'Hindi',
+      langEnglish: 'English'
+    },
     boardReselect: {
       title: 'Which board are you studying?',
       desc: 'Eklavya now focuses on CBSE and Haryana Board (HBSE) so we can supply real past papers and a matching syllabus. The board you picked earlier is no longer one we cover — please choose the closest one so your practice and past papers are right.',
@@ -1356,6 +1390,34 @@ export const translations = {
       selfReview: 'स्वयं जाँचें',
       yourAnswer: 'आपका उत्तर',
       done: 'हो गया'
+    },
+    voiceMentor: {
+      offerAsk: 'क्या तुम चाहते हो कि मैं तुम्हारे साथ रहूँ और बोलकर रास्ता दिखाऊँ?',
+      offerLanguage: 'तुम्हें कौन सी भाषा में सुनना है?',
+      offerYes: 'हाँ',
+      offerNo: 'नहीं',
+      offerSkip: 'अभी रहने दो',
+      tapToTalk: 'मुझसे बात करने के लिए दबाओ',
+      stopListening: 'सुनना बंद करो',
+      mute: 'आवाज़ बंद करो',
+      unmute: 'आवाज़ चालू करो',
+      showMeAround: 'मुझे फिर से दिखाओ',
+      tourLabel: 'तुम्हारे पन्ने की एक छोटी सैर',
+      skipTour: 'रहने दो',
+      choicesLabel: 'क्या करना है?',
+      choiceStudy: 'मेरी पढ़ाई की योजना',
+      choicePractice: 'अभ्यास के सवाल',
+      sayYourClass: 'बोलो, तुम कौन सी कक्षा में हो',
+      sayYourSubject: 'बोलो, कौन सा विषय पढ़ना है',
+      orTapAbove: 'या ऊपर वाला बटन दबा दो',
+      settingsHeading: 'बोलने वाला साथी',
+      settingsSub: 'एक साथी जो पन्ना पढ़कर सुनाता है और दबाने पर तुम्हारी बात सुनता है।',
+      settingsEnable: 'बोलने वाला साथी चालू करो',
+      settingsLanguage: 'साथी की भाषा',
+      settingsReplayTour: 'सैर फिर से चलाओ',
+      settingsUnavailable: 'बोलने वाला साथी छोटी कक्षाओं के लिए है।',
+      langHindi: 'हिन्दी',
+      langEnglish: 'English'
     },
     boardReselect: {
       title: 'आप किस बोर्ड से पढ़ाई कर रहे हैं?',

@@ -1,4 +1,5 @@
 import { callGroqChat } from './groqClient.js';
+import { classifyProviderError } from './providerError.js';
 import { glossaryPromptBlock } from '../config/hindiGlossary.js';
 
 // ── Workstream G: Hindi must be SPOKEN Hindi, not शुद्ध हिंदी ────────────────
@@ -122,6 +123,58 @@ WHAT MUST NOT CHANGE:
 Return ONLY the Hindi translation. No commentary, no quotation marks, no working.`;
 
 export { HINDI_REGISTER_RULES };
+
+// ── C2: EASY HINDI FOR CLASS 5 AND BELOW ────────────────────────────────────
+//
+// A six-year-old and a Class 10 student need different Hindi, and the register above is
+// written for the older one — "simple spoken Hindi that a 12-year-old understands" is
+// still too much for a child who is learning to read.
+//
+// THIS IS AN ADDENDUM, APPENDED AFTER THE FIDELITY RULES — NEVER A REPLACEMENT FOR
+// THEM, AND NEVER PLACED FIRST.
+//
+// Design Rule 13 is the whole reason for that ordering. The first draft of the register
+// prompt LED with "write the way a teacher speaks in class", and the model read it as
+// licence to teach: it answered the quiz questions instead of translating them, invented
+// a passage plus five comprehension questions for "Read the following paragraph", tried
+// (wrongly) to solve a quadratic, and rewrote a score line as the student asking for
+// help. Every one of those is a wrong question in front of a student, which is strictly
+// worse than a stiffly-worded right one.
+//
+// So this block says only HOW TO WORD a translation, never what to produce. It contains
+// no instruction to explain, simplify the CONTENT, shorten the meaning, or help. The
+// register comes from the instruction; the task definition is untouched above.
+const PRIMARY_REGISTER_ADDENDUM = `
+
+THIS READER IS A SMALL CHILD (about 5 to 10 years old). Keep the translation faithful — the ABSOLUTE RULES above still apply exactly — but choose the simplest possible words:
+- Everyday spoken words a small child already uses at home. Never a literary or Sanskritised synonym when a common one exists.
+- Very short sentences. One idea per sentence. Split a long English sentence into two or three short Hindi ones rather than using clauses.
+- Use तुम, not आप.
+- Do NOT add explanation, examples, or anything not present in the input. Simpler WORDING only — never simpler CONTENT.`;
+
+/**
+ * Grades whose translations use the easy register. Matches the mentor's own band.
+ *
+ * Written as an explicit alternation rather than `class\s*[1-5]` because that pattern
+ * was mangled twice by shell escaping while being written, silently becoming
+ * `classs*[1-5]` — which matched "Nursery" and "KG" but NOT "Class 1", so the easy
+ * register applied to exactly the two grades that cannot enrol and to none of the
+ * grades that can. Caught by asserting each grade label individually rather than
+ * trusting one representative case.
+ */
+const PRIMARY_GRADE_LABELS = ['nursery', 'kg', 'class 1', 'class 2', 'class 3', 'class 4', 'class 5'];
+
+export function isPrimaryGradeLabel(grade) {
+  const g = String(grade || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return PRIMARY_GRADE_LABELS.includes(g);
+}
+
+/** The register rules for a grade. Identical to before when no grade is supplied. */
+export function registerRulesFor(grade) {
+  return isPrimaryGradeLabel(grade)
+    ? HINDI_REGISTER_RULES + PRIMARY_REGISTER_ADDENDUM
+    : HINDI_REGISTER_RULES;
+}
 // Groq AI Fallback Translator when Sarvam is out of credits or unavailable.
 //
 // Routed through the shared client so THIS fallback has a fallback of its own.
@@ -129,7 +182,7 @@ export { HINDI_REGISTER_RULES };
 // Groq's 70b returned 429 — exactly the state a free tier ends up in — it gave up
 // and the caller passed the English text through. The 8b and OpenAI tiers can both
 // translate to Devanagari, so that was a self-inflicted degradation of Hindi.
-async function translateWithGroqFallback(text, targetLang = 'hi') {
+async function translateWithGroqFallback(text, targetLang = 'hi', grade = '') {
   if (!text || typeof text !== 'string') return null;
 
   try {
@@ -140,7 +193,7 @@ async function translateWithGroqFallback(text, targetLang = 'hi') {
           // Only the terms present in THIS string are appended. Injecting the whole
           // glossary would bury the register rules under a wall of vocabulary and cost
           // tokens on every translation in the app.
-          content: HINDI_REGISTER_RULES + glossaryPromptBlock(text)
+          content: registerRulesFor(grade) + glossaryPromptBlock(text)
         },
         { role: 'user', content: text }
       ],
@@ -155,6 +208,13 @@ async function translateWithGroqFallback(text, targetLang = 'hi') {
 }
 
 // Shared Sarvam Translate helper with Groq fallback, paragraph chunking, and retry logic
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.maskMath]
+ * @param {string}  [opts.grade]  when supplied and primary, selects the easy register.
+ *                                Optional and defaulted, so every existing call site
+ *                                behaves EXACTLY as before.
+ */
 export async function translateTextWithSarvam(text, targetLang = 'hi-IN', retries = 1, opts = {}) {
   if (!text || typeof text !== 'string') return null;
 
@@ -213,7 +273,23 @@ export async function translateTextWithSarvam(text, targetLang = 'hi-IN', retrie
             return data.translated_text;
           }
         } else {
-          console.warn(`Sarvam API returned HTTP ${response.status} (likely out of credits or rate limited)`);
+          // The old line here read `(likely out of credits or rate limited)` — the code
+          // naming BOTH possibilities in its own log message because it could not tell
+          // them apart. That parenthetical was an admission, and the answer was sitting
+          // in the response body it never read.
+          //
+          // This path matters more than most: it is the Hindi translation fallback, and
+          // without one a single 429 passed ENGLISH straight through to a Hindi-mode
+          // student. So it is the path where guessing wrong is most visible to a user,
+          // and it was the one guessing hardest.
+          const err = await classifyProviderError(response, 'Sarvam translate');
+          console.warn(err.summary);
+          if (err.terminal) {
+            // Retrying an exhausted key is not caution, it is latency: every attempt
+            // delays the Groq fallback that WILL work. Break to it immediately.
+            console.warn('Sarvam translate: terminal (quota/billing) — not retrying; falling back to Groq.');
+            break;
+          }
         }
       } catch (error) {
         console.warn(`Sarvam translation attempt ${attempt + 1} failed:`, error.message);
@@ -222,7 +298,9 @@ export async function translateTextWithSarvam(text, targetLang = 'hi-IN', retrie
   }
 
   // Fallback to Groq AI if Sarvam fails or is out of credits
-  const groqTranslated = await translateWithGroqFallback(text, targetLang);
+  // `opts.grade` reaches the register selection here. Absent on every existing call
+  // site, which is why the default is 'no grade' = the unchanged Class-10 register.
+  const groqTranslated = await translateWithGroqFallback(text, targetLang, opts.grade);
   if (groqTranslated) {
     return groqTranslated;
   }

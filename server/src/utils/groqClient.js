@@ -3,6 +3,8 @@
 // ONE way instead of duplicating the model / temperature / endpoint. Defaults
 // match the original chatbot call (llama-3.3-70b-versatile @ 0.4) so existing
 // behaviour is unchanged; callers can override per use.
+import { classifyProviderError } from './providerError.js';
+
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
 const FALLBACK_MODEL = 'llama-3.1-8b-instant';
@@ -81,18 +83,39 @@ export async function callOpenAIChat(
         return data.choices?.[0]?.message?.content?.trim() || null;
       }
 
+      // ── The body decides, not the status. Design Rule 2. ──────────────────
+      //
+      // `RETRYABLE` contains 429 flat, and 429 from this provider is TWO STATES:
+      //   rate_limit_exceeded  -> transient. Back off; it will clear.
+      //   insufficient_quota   -> the key has no credits. It will NEVER clear.
+      //
+      // Retrying the second is not caution, it is a guaranteed-futile wait repeated
+      // with exponential backoff — and it delays the caller's real fallback by the
+      // whole retry budget. Measured: a 92-call cache-warm against a zero-balance key
+      // produced 92 identical "HTTP 429" lines and read as worth retrying.
+      //
+      // The body is read ONCE here and consumed; nothing downstream re-reads `res`.
+      const err = await classifyProviderError(res, `OpenAI '${model}'`);
+
+      if (err.terminal) {
+        // FAIL FAST. Louder than a warn: an exhausted key is an operator action, not a
+        // transient blip, and it will otherwise be lost in a wall of retry lines.
+        console.error(`${err.summary} — TERMINAL, not retrying (this will not clear on its own).`);
+        return null;
+      }
+
       if (RETRYABLE.has(res.status) && attempt < retries) {
         // Honour Retry-After when the API sends one; otherwise exponential backoff.
         const header = Number(res.headers.get('retry-after'));
         const waitMs = Number.isFinite(header) && header > 0
           ? header * 1000
           : retryDelayMs * (2 ** attempt);
-        console.warn(`OpenAI '${model}' HTTP ${res.status} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${retries}).`);
+        console.warn(`${err.summary} — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${retries}).`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
 
-      console.warn(`OpenAI '${model}' returned HTTP ${res.status}`);
+      console.warn(err.summary);
       return null;
     } catch (err) {
       if (attempt < retries) {

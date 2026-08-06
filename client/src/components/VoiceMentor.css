@@ -1,0 +1,286 @@
+/* Feature 27 — Voice Mentor.
+   Mobile-first from 360px. Every control is at least 44px, because the user is a child
+   with a small finger and no way to read an error if they miss. */
+
+.voice-mentor {
+  position: fixed;
+  right: 1rem;
+  /* Clear of the dashboard's fixed bottom nav on mobile — the ChatWidget launcher
+     already does this; the two must not stack on top of each other, so the mentor sits
+     on the LEFT and the chat launcher keeps the right. */
+  bottom: 5.5rem;
+  left: auto;
+  z-index: 1400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
+}
+.voice-mentor > * { pointer-events: auto; }
+
+@media (max-width: 768px) {
+  .voice-mentor { left: 1rem; right: auto; bottom: 5.75rem; }
+}
+
+.vm-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: #FFFDF7;
+  border: 2px solid #2F6B3A;
+  border-radius: 999px;
+  padding: 0.35rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+/* The avatar: the primary control. Bigger than the two beside it so it reads as the
+   main thing to press without anyone having to say so. */
+.vm-avatar-btn {
+  position: relative;
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: #EAF4EC;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.vm-avatar-btn img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.vm-avatar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* The listening/speaking ring. This is what makes the second avatar asset OPTIONAL:
+   state is carried by the ring on its own, so the feature is complete whether or not a
+   listening-state image ever arrives. */
+.vm-state-ring {
+  position: absolute; inset: -4px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  transition: border-color 0.2s ease;
+}
+.vm-avatar-btn.is-speaking .vm-state-ring { border-color: #2F6B3A; }
+.vm-avatar-btn.is-listening .vm-state-ring {
+  border-color: #E07A3E;
+  animation: vm-pulse 1.1s ease-in-out infinite;
+}
+@keyframes vm-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.12); opacity: 0.55; }
+}
+
+.vm-mic-badge {
+  position: absolute; right: -2px; bottom: -2px;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: #2F6B3A; color: #fff;
+  display: grid; place-items: center;
+  border: 2px solid #FFFDF7;
+}
+.vm-avatar-btn.is-listening .vm-mic-badge { background: #E07A3E; }
+.vm-spin { animation: vm-spin 1s linear infinite; }
+@keyframes vm-spin { to { transform: rotate(360deg); } }
+
+/* Mute and replay. ALWAYS VISIBLE — never behind a long-press or a menu. 44px minimum
+   so a child's tap lands. */
+.vm-side-btn {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid #CFE3D4;
+  background: #fff;
+  color: #2F6B3A;
+  display: grid; place-items: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.vm-side-btn:hover { background: #EAF4EC; }
+
+.vm-notice {
+  max-width: 15rem;
+  margin: 0;
+  background: #FFF4E5;
+  border: 1px solid #E07A3E;
+  border-radius: 12px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: #7A4A1E;
+}
+
+/* The two-button fallback for an answer that did not match. Big, icon-led, and offered
+   INSTEAD of re-asking — never as well as. */
+.vm-choices { display: flex; flex-direction: column; gap: 0.5rem; }
+.vm-choice {
+  display: flex; align-items: center; gap: 0.6rem;
+  min-height: 52px;
+  padding: 0.6rem 1rem;
+  border-radius: 14px;
+  border: 2px solid #2F6B3A;
+  background: #FFFDF7;
+  color: #204A28;
+  font-size: 1rem; font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.vm-choice span:first-child { font-size: 1.4rem; line-height: 1; }
+.vm-choice-primary { background: #2F6B3A; color: #fff; }
+
+/* ── The tour ─────────────────────────────────────────────────────────────── */
+
+.mentor-tour { position: fixed; inset: 0; z-index: 1500; pointer-events: none; }
+.mt-scrim {
+  position: absolute; inset: 0;
+  background: rgba(20, 32, 22, 0.45);
+  pointer-events: auto;
+}
+
+/* The highlight is a RING, not a mask that swallows taps. The child is being told to
+   look at something and then to tap it; an overlay that blocks the tap teaches them the
+   screen is broken. */
+.mt-highlight {
+  position: fixed;
+  border: 3px solid #E07A3E;
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(20, 32, 22, 0.45), 0 0 18px 4px rgba(224, 122, 62, 0.65);
+  pointer-events: none;
+  transition: top 0.3s ease, left 0.3s ease, width 0.3s ease, height 0.3s ease;
+  animation: mt-glow 1.6s ease-in-out infinite;
+}
+@keyframes mt-glow {
+  0%, 100% { border-color: #E07A3E; }
+  50% { border-color: #F6B98A; }
+}
+
+.mt-skip {
+  position: absolute; top: 1rem; right: 1rem;
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 0.35rem;
+  min-height: 44px;
+  padding: 0.5rem 0.9rem;
+  border-radius: 999px;
+  border: none;
+  background: #FFFDF7; color: #204A28;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mt-progress {
+  position: absolute; bottom: 1.25rem; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 0.4rem;
+}
+.mt-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 253, 247, 0.4); }
+.mt-dot.on { background: #E07A3E; }
+
+/* ── The offer screen ─────────────────────────────────────────────────────── */
+
+.mentor-offer {
+  min-height: 70vh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1.25rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+.mo-avatar { width: 110px; height: 110px; border-radius: 50%; object-fit: cover; }
+.mo-question { font-size: 1.15rem; font-weight: 600; color: #204A28; max-width: 26rem; margin: 0; line-height: 1.5; }
+.mo-spin { color: #2F6B3A; }
+
+.mo-choices { display: flex; gap: 1.25rem; flex-wrap: wrap; justify-content: center; }
+
+/* Deliberately enormous. These are the two things on screen and they are pressed by a
+   child who is going on shape and colour, not on the words under them. */
+.mo-choice {
+  width: 132px; min-height: 132px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem;
+  border-radius: 24px;
+  border: 3px solid #2F6B3A;
+  background: #FFFDF7;
+  color: #204A28;
+  font-size: 1.05rem; font-weight: 700;
+  cursor: pointer;
+}
+.mo-yes { background: #2F6B3A; border-color: #2F6B3A; color: #fff; }
+.mo-no { background: #FFFDF7; border-color: #B4B4B4; color: #4A4A4A; }
+.mo-lang-glyph { font-size: 2.4rem; line-height: 1; font-weight: 700; }
+
+.mo-skip {
+  background: none; border: none;
+  color: #5C6B5E; text-decoration: underline;
+  font-size: 0.9rem; cursor: pointer;
+  min-height: 44px;
+}
+
+@media (max-width: 360px) {
+  .mo-choice { width: 116px; min-height: 116px; }
+  .vm-avatar-btn { width: 52px; height: 52px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vm-state-ring, .mt-highlight, .vm-spin { animation: none; }
+  .mt-highlight { transition: none; }
+}
+
+/* ── Inline field mic (profile flow) and course picker ────────────────────── */
+
+.mentor-field-mic,
+.mentor-course-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.mfm-btn {
+  width: 46px; height: 46px;      /* >=44px: a child's tap, and no readable error if it misses */
+  border-radius: 50%;
+  border: 2px solid #2F6B3A;
+  background: #EAF4EC;
+  color: #2F6B3A;
+  display: grid; place-items: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.mfm-btn.is-listening { background: #FFF0E3; border-color: #E07A3E; color: #E07A3E; }
+.mfm-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* The heard value. Deliberately LARGER than the form around it: when the device has no
+   Hindi voice this is the only feedback the child (or the parent beside them) gets, so
+   it cannot be the same size as everything else. */
+.mfm-heard {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 1.25rem; font-weight: 700;
+  color: #204A28;
+  background: #EAF4EC;
+  border: 1.5px solid #2F6B3A;
+  border-radius: 12px;
+  padding: 0.35rem 0.8rem;
+}
+
+.mfm-notice, .mcp-hint {
+  font-size: 0.85rem;
+  color: #5C6B5E;
+}
+.mfm-notice { color: #7A4A1E; }
+
+/* ── Inline guidance ring (MentorGuide) ───────────────────────────────────── */
+/* Deliberately NOT the tour's spotlight. The tour dims the page to drive attention
+   through a sequence; inline guidance fires while the child is mid-task, and darkening
+   the screen around a button reads as the app having gone wrong. Ring only. */
+.mentor-ring {
+  position: fixed;
+  z-index: 1450;
+  border: 3px solid #E07A3E;
+  border-radius: 12px;
+  box-shadow: 0 0 14px 3px rgba(224, 122, 62, 0.55);
+  pointer-events: none;            /* the tap belongs to the child, not to the ring */
+  transition: top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease;
+  animation: mentor-ring-pulse 1.6s ease-in-out infinite;
+}
+@keyframes mentor-ring-pulse {
+  0%, 100% { border-color: #E07A3E; box-shadow: 0 0 14px 3px rgba(224, 122, 62, 0.55); }
+  50% { border-color: #F6B98A; box-shadow: 0 0 20px 6px rgba(224, 122, 62, 0.30); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mentor-ring { animation: none; transition: none; }
+}

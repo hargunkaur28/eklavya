@@ -3,6 +3,9 @@ import { useScrollToResult } from '../utils/useScrollToResult.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useLanguage } from '../context/LanguageContext.jsx';
 import { translations } from '../data/translations.js';
+import { useMentor } from '../context/MentorContext.jsx';
+import MentorGuide from './MentorGuide.jsx';
+import MentorQuizResult from './MentorQuizResult.jsx';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardCheck, CheckCircle2, XCircle, Loader2, RefreshCw, Sparkles, ArrowLeft, ArrowRight } from 'lucide-react';
 import SpeakerButton from './SpeakerButton.jsx';
@@ -21,6 +24,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
   const { language } = useLanguage();
   const navigate = useNavigate();
   const t = translations[language]?.quiz || translations.en.quiz;
+  const mentorActive = !!useMentor()?.active;
 
   const [status, setStatus] = useState('init'); // init|idle|summary|loading|active|submitting|result|reviewing|unavailable
   const [questions, setQuestions] = useState([]);
@@ -204,7 +208,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
           </div>
         </div>
         {status === 'unavailable' && <p className="quiz-unavailable">{t.unavailable}</p>}
-        <button type="button" className="primary-button quiz-start-btn" onClick={startQuiz} disabled={status === 'loading'}>
+        <button type="button" className="primary-button quiz-start-btn" data-mentor="module-quiz" onClick={startQuiz} disabled={status === 'loading'}>
           {status === 'loading'
             ? <><Loader2 size={16} className="animate-spin" /> {t.loading}</>
             : status === 'unavailable' ? <><RefreshCw size={16} /> {t.retry}</> : t.start}
@@ -298,6 +302,14 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
                   subject={subject}
                   autoPlay={autoPlayIndex === qi}
                   onEnded={() => setAutoPlayIndex((prev) => (prev === qi ? qi + 1 : prev))}
+                  // Feature 21 chains question narration on onEnded ALONE, so one
+                  // failure ends the chain for the rest of the quiz. For a Class 10
+                  // student that costs them narration they can read past; for a child
+                  // who cannot read any of it, it is the difference between a usable
+                  // quiz and an unusable one. Scoped to mentor-enabled sessions, like
+                  // the strictVoice split — Feature 21's behaviour is untouched for
+                  // everyone else.
+                  onFailed={mentorActive ? () => setAutoPlayIndex((prev) => (prev === qi ? qi + 1 : prev)) : null}
                   size={16}
                 />
               </div>
@@ -335,6 +347,14 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
   // ── Just submitted ──
   return (
     <section className="module-quiz-card">
+      {/* Device pass: the mentor said NOTHING after a submit. For a child who cannot
+          read the result banner, submitting and being ignored look the same. */}
+      <MentorQuizResult
+        passed={!!result.passed}
+        score={result.score}
+        total={result.total}
+        attemptKey={`${dayNumber}-${result.score}-${result.total}-${result.passed}`}
+      />
       {renderBanner(result, true)}
       {renderReview(result)}
       <div className="practice-result-actions">
@@ -343,6 +363,7 @@ export default function ModuleQuiz({ roadmapId, dayNumber, subject = '', onDayCo
             <button
               type="button"
               className="primary-button quiz-next-btn"
+              data-mentor="next-day"
               onClick={() => navigate(`/roadmap/${roadmapId}/day/${nextDayNum}`)}
               style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}
             >
